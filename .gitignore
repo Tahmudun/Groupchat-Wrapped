@@ -208,3 +208,41 @@ __marimo__/
 
 data/
 *.db
+# ============================================================
+# Project-specific additions
+# ============================================================
+
+# macOS Finder noise — drops into every folder, never useful
+.DS_Store
+**/.DS_Store
+
+# VSCode workspace settings (solo project, keep them local)
+.vscode/
+
+# Additional env variants beyond the one Python already covers
+.env.local
+.env.production
+.env.*.local
+
+# Node (for when the frontend gets deployed via Vercel/Netlify later)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor backups / swap files
+*.swp
+*.swo
+*~
+.#*
+#*#
+
+# Instagram exports — double coverage in case I ever put raw zips outside data/
+*instagram*.zip
+*meta-*.zip
+
+# Supabase CLI local cache (if you ever use supabase-cli later)
+.supabase/
+
+# Python compiled files edge case
+*.pyc

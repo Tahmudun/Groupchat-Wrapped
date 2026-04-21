@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GC Dossier</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,800;1,9..144,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header class="masthead">
+    <div class="masthead-left">
+      <div class="stamp">CONFIDENTIAL</div>
+      <h1>GC DOSSIER</h1>
+      <div class="sub">Group Chat Message Archive &nbsp;·&nbsp; Searchable Record</div>
+    </div>
+    <div class="masthead-right">
+      <div class="stat-block">
+        <div class="stat-label">Messages on file</div>
+        <div class="stat-value" id="stat-messages">—</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-label">Members tracked</div>
+        <div class="stat-value" id="stat-members">—</div>
+      </div>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="search">Search</button>
+    <button class="tab" data-tab="interactions">Interactions</button>
+    <button class="tab" data-tab="timeline">Timeline</button>
+  </nav>
+
+  <!-- ================ SEARCH TAB ================ -->
+  <section class="panel" id="panel-search">
+    <div class="search-bar">
+      <input
+        type="text"
+        id="search-query"
+        placeholder="Search messages…   (try: &quot;ban&quot;, &quot;report&quot;, or any keyword)"
+        autocomplete="off"
+      />
+      <button id="search-btn">Search</button>
+    </div>
+
+    <div class="filters">
+      <label>
+        <span>Sender</span>
+        <select id="filter-sender"><option value="">Anyone</option></select>
+      </label>
+      <label>
+        <span>Media type</span>
+        <select id="filter-media">
+          <option value="">Any</option>
+          <option value="none">Text only</option>
+          <option value="photo">Photo</option>
+          <option value="video">Video</option>
+          <option value="audio">Audio</option>
+          <option value="gif">GIF</option>
+          <option value="reel">Reel</option>
+          <option value="link">Link</option>
+        </select>
+      </label>
+      <label>
+        <span>From</span>
+        <input type="date" id="filter-start" />
+      </label>
+      <label>
+        <span>To</span>
+        <input type="date" id="filter-end" />
+      </label>
+      <label>
+        <span>Min reactions</span>
+        <input type="number" id="filter-min-reactions" min="0" value="0" />
+      </label>
+    </div>
+
+    <div class="result-meta" id="result-meta"></div>
+    <div class="results" id="results"></div>
+  </section>
+
+  <!-- ================ INTERACTIONS TAB ================ -->
+  <section class="panel hidden" id="panel-interactions">
+    <p class="panel-note">
+      Find every time User B spoke shortly after User A. Approximates "B replied to A"
+      using a time window (Instagram exports don't include real reply threading).
+    </p>
+    <div class="filters">
+      <label>
+        <span>User A (spoke first)</span>
+        <select id="inter-a"></select>
+      </label>
+      <label>
+        <span>User B (responded)</span>
+        <select id="inter-b"></select>
+      </label>
+      <label>
+        <span>Window (seconds)</span>
+        <input type="number" id="inter-window" min="5" value="60" />
+      </label>
+      <button id="inter-btn">Find</button>
+    </div>
+    <div class="result-meta" id="inter-meta"></div>
+    <div class="results" id="inter-results"></div>
+  </section>
+
+  <!-- ================ TIMELINE TAB ================ -->
+  <section class="panel hidden" id="panel-timeline">
+    <p class="panel-note">
+      Who was active around a specific moment. Use this to correlate chat activity
+      with outside events (e.g., when an account got taken down).
+    </p>
+    <div class="filters">
+      <label>
+        <span>Center time</span>
+        <input type="datetime-local" id="tl-center" />
+      </label>
+      <label>
+        <span>Window (hours)</span>
+        <input type="number" id="tl-window" min="1" value="24" />
+      </label>
+      <button id="tl-btn">Analyze</button>
+    </div>
+    <div class="result-meta" id="tl-meta"></div>
+    <div class="results" id="tl-results"></div>
+  </section>
+
+  <footer class="footer">
+    <span class="mono">gc-dossier · build 0.1</span>
+    <span class="mono" id="db-status">db: checking…</span>
+  </footer>
+
+  <!-- Supabase client. Loaded from CDN so there's no build step. -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="app.js"></script>
+</body>
+</html>
