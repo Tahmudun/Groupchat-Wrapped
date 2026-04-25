@@ -9,6 +9,7 @@
 -- Apply by pasting into Supabase Dashboard → SQL Editor → Run.
 --
 -- Last rebuilt from live database introspection: 2026-04-23
+-- Last updated: 2026-04-24 (search_messages V3 + maintenance notes)
 -- ============================================================================
 
 
@@ -103,73 +104,116 @@ CREATE INDEX IF NOT EXISTS idx_members_status ON members (status);
 -- ----------------------------------------------------------------------------
 -- FUNCTION: search_messages
 -- ----------------------------------------------------------------------------
--- Primary search RPC. Returns matching messages ranked by relevance (when
--- keyword present) then by timestamp descending. All filter params are
--- nullable — pass NULL to skip.
+-- Primary search RPC. Returns matching messages with user-controlled ordering.
+-- All filter params are nullable — pass NULL to skip.
 --
--- KNOWN ISSUES (flagged for next session):
---   1. LEFT JOIN reactions + GROUP BY is expensive; same bug we just fixed
---      in count_messages. High-volume sender-only searches can time out.
---   2. Missing WHERE m.message_type = 'message' filter — system events
---      (adds/leaves) still leak into results.
---   3. Planned: add sort_order parameter for user-controlled ordering.
+-- sort_order accepts: 'newest' (default), 'oldest', 'relevance', 'most_reactions'.
+-- Anything else falls back to 'newest' via whitelist (prevents SQL injection
+-- since the value is never interpolated, only compared against fixed strings).
+--
+-- Performance design:
+--   - Uses a CTE (reaction_counts) that aggregates the reactions table ONCE,
+--     not per-message. The HAVING clause pre-filters to only messages meeting
+--     min_reactions, which keeps the join's right side small.
+--   - The CTE is essentially free when reactions aren't needed (min_reactions=0
+--     AND sort != 'most_reactions') — Postgres can prune it.
+--   - Always filters message_type = 'message' to exclude system events
+--     (joins/leaves/adds) from results.
+--
+-- Performance history:
+--   - V1: LEFT JOIN reactions + GROUP BY 6 cols + HAVING. Aggregated whole
+--     reactions table on every call. Timed out on broad searches.
+--   - V2: Correlated subqueries gated by min_reactions/sort. Fixed broad
+--     searches but timed out on min_reactions > 0 with no other filters
+--     because the subquery ran per-row across hundreds of thousands of rows.
+--   - V3 (current): CTE with HAVING pre-filter. Aggregation happens once on
+--     the reactions table itself, then joined to messages.
 -- ----------------------------------------------------------------------------
+DROP FUNCTION IF EXISTS search_messages(
+  text, text, text, timestamptz, timestamptz, integer, text, integer, integer
+);
+
 CREATE OR REPLACE FUNCTION search_messages(
-    query_text    TEXT    DEFAULT NULL,
-    filter_sender TEXT    DEFAULT NULL,
-    filter_media  TEXT    DEFAULT NULL,
+    query_text    TEXT        DEFAULT NULL,
+    filter_sender TEXT        DEFAULT NULL,
+    filter_media  TEXT        DEFAULT NULL,
     start_date    TIMESTAMPTZ DEFAULT NULL,
     end_date      TIMESTAMPTZ DEFAULT NULL,
-    min_reactions INT     DEFAULT 0,
-    result_limit  INT     DEFAULT 50,
-    result_offset INT     DEFAULT 0
+    min_reactions INT         DEFAULT 0,
+    sort_order    TEXT        DEFAULT 'newest',
+    result_limit  INT         DEFAULT 50,
+    result_offset INT         DEFAULT 0
 )
 RETURNS TABLE (
-    id            TEXT,
-    sender        TEXT,
-    ts            TIMESTAMPTZ,
-    content       TEXT,
-    media_type    TEXT,
+    id             TEXT,
+    sender         TEXT,
+    ts             TIMESTAMPTZ,
+    content        TEXT,
+    media_type     TEXT,
     reaction_count BIGINT,
-    rank          REAL
+    rank           REAL
 )
 LANGUAGE plpgsql STABLE SECURITY DEFINER AS $$
 DECLARE
   tsq tsquery;
+  safe_sort TEXT;
+  needs_reactions BOOLEAN;
 BEGIN
   IF query_text IS NOT NULL AND trim(query_text) <> '' THEN
     tsq := plainto_tsquery('english', query_text);
   END IF;
 
+  safe_sort := CASE
+    WHEN sort_order IN ('newest', 'oldest', 'relevance', 'most_reactions')
+      THEN sort_order
+    ELSE 'newest'
+  END;
+
+  -- Need reaction counts only when filtering by them or sorting by them.
+  needs_reactions := (min_reactions > 0) OR (safe_sort = 'most_reactions');
+
   RETURN QUERY
+  WITH reaction_counts AS (
+    -- Aggregate reactions ONCE. The HAVING clause shrinks this to only
+    -- messages meeting min_reactions, which is typically a small fraction
+    -- of total messages. When needs_reactions is false, HAVING is a no-op.
+    SELECT message_id, COUNT(*)::BIGINT AS cnt
+    FROM reactions
+    GROUP BY message_id
+    HAVING (NOT needs_reactions) OR COUNT(*) >= min_reactions
+  )
   SELECT
     m.id,
     m.sender,
-    m.timestamp                                        AS ts,
+    m.timestamp AS ts,
     m.content,
     m.media_type,
-    COUNT(r.emoji)                                     AS reaction_count,
-    COALESCE(
-      CASE WHEN tsq IS NOT NULL
+    COALESCE(rc.cnt, 0) AS reaction_count,
+    CASE
+      WHEN tsq IS NOT NULL AND safe_sort = 'relevance'
         THEN ts_rank(m.search_vector, tsq)
-      END,
-      0.0
-    )                                                  AS rank
+      ELSE 0.0::REAL
+    END AS rank
   FROM messages m
-  LEFT JOIN reactions r ON r.message_id = m.id
+  LEFT JOIN reaction_counts rc ON rc.message_id = m.id
   WHERE
-    (tsq IS NULL OR m.search_vector @@ tsq)
+    m.message_type = 'message'
+    AND (tsq IS NULL OR m.search_vector @@ tsq)
     AND (filter_sender IS NULL OR m.sender     = filter_sender)
     AND (filter_media  IS NULL OR m.media_type = filter_media)
-    AND (start_date    IS NULL OR m.timestamp  >= start_date)
-    AND (end_date      IS NULL OR m.timestamp  <= end_date)
-  GROUP BY m.id, m.sender, m.timestamp, m.content, m.media_type, m.search_vector
-  HAVING COUNT(r.emoji) >= min_reactions
+    AND (start_date    IS NULL OR m.timestamp >= start_date)
+    AND (end_date      IS NULL OR m.timestamp <= end_date)
+    -- When min_reactions > 0, the CTE is already filtered. Requiring
+    -- rc.message_id IS NOT NULL turns this LEFT JOIN into an effective
+    -- INNER JOIN, eliminating messages without enough reactions.
+    AND (min_reactions = 0 OR rc.message_id IS NOT NULL)
   ORDER BY
-    CASE WHEN tsq IS NOT NULL
+    CASE WHEN safe_sort = 'relevance' AND tsq IS NOT NULL
       THEN ts_rank(m.search_vector, tsq)
     END DESC NULLS LAST,
-    m.timestamp DESC
+    CASE WHEN safe_sort = 'most_reactions' THEN COALESCE(rc.cnt, 0) END DESC NULLS LAST,
+    CASE WHEN safe_sort = 'oldest' THEN m.timestamp END ASC,
+    CASE WHEN safe_sort IN ('newest', 'relevance', 'most_reactions') THEN m.timestamp END DESC
   LIMIT  result_limit
   OFFSET result_offset;
 END;
@@ -410,3 +454,22 @@ GRANT EXECUTE ON FUNCTION get_members_with_counts TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION update_member           TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION find_interactions       TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION activity_around         TO anon, authenticated;
+
+-- ============================================================================
+-- SECTION 5: MAINTENANCE NOTES
+-- ============================================================================
+-- After any large data import, run:
+--   ANALYZE messages;
+--   ANALYZE reactions;
+--
+-- This refreshes the query planner's table statistics. Stale stats cause
+-- inconsistent performance — the same query plan flapping between fast
+-- and timeout. Especially relevant for queries combining min_reactions
+-- with sort_order='most_reactions', which sit on a planner cost boundary
+-- where the choice between filter-then-sort vs sort-then-filter matters
+-- a lot. Empirically, a stale ANALYZE on this database caused random
+-- statement timeouts on those queries; ANALYZE eliminated them.
+--
+-- These are not run as part of this schema file because they're a
+-- maintenance operation, not part of the structure itself.
+-- ============================================================================

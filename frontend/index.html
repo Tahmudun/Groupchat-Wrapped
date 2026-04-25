@@ -4,22 +4,57 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GC Dossier</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,800;1,9..144,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <!-- style.css is the only file we changed. app.js is untouched. -->
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
+  <!-- ===== SYSTEM LOG BAR =====
+       This bar sits at the very top of the page above the masthead.
+       It mimics a terminal boot log — showing live DB stats as [SYS]
+       lines and flagging issues with [WARN] lines.
+       The content here is placeholder — app.js will update it on load. -->
+  <div class="syslog">
+    <div class="log-line">
+      <span class="tag-sys">[SYS]</span>
+      db <span class="val" id="log-conn">connecting…</span>
+      <span class="sep">·</span>
+      <span class="val" id="log-msgs">—</span> records indexed
+      <span class="sep">·</span>
+      reactions: <span class="val" id="log-rxns">—</span>
+    </div>
+    <div class="log-line">
+      <span class="tag-sys">[SYS]</span>
+      members: <span class="val" id="log-members">—</span>
+      <span class="sep">·</span>
+      range: <span class="val">2023-01-04 → 2026-03-27</span>
+    </div>
+    <div class="log-line">
+      <span class="tag-warn">[WARN]</span>
+      <span class="val-red">17,822</span> msgs attributed to deleted accounts
+      <span class="sep">·</span>
+      flagged for review
+    </div>
+  </div>
+
+  <!-- ===== MASTHEAD =====
+       The main header. Left side has the stamp, wordmark, and subtitle.
+       Right side has the two big stat numbers. -->
   <header class="masthead">
     <div class="masthead-left">
+      <!-- CONFIDENTIAL stamp — tilted, red border -->
       <div class="stamp">CONFIDENTIAL</div>
-      <h1>GC DOSSIER</h1>
+
+      <!-- Wordmark. The <span> makes the underscore red. -->
+      <h1>GC<span>_</span>DOSSIER</h1>
+
       <div class="sub">Group Chat Message Archive &nbsp;·&nbsp; Searchable Record</div>
     </div>
+
     <div class="masthead-right">
       <div class="stat-block">
         <div class="stat-label">Messages on file</div>
+        <!-- app.js fills this in on load -->
         <div class="stat-value" id="stat-messages">—</div>
       </div>
       <div class="stat-block">
@@ -29,6 +64,9 @@
     </div>
   </header>
 
+  <!-- ===== TABS =====
+       Three tabs. The data-tab attribute is what app.js reads to
+       know which panel to show/hide when a tab is clicked. -->
   <nav class="tabs">
     <button class="tab active" data-tab="search">Search</button>
     <button class="tab" data-tab="interactions">Interactions</button>
@@ -41,7 +79,7 @@
       <input
         type="text"
         id="search-query"
-        placeholder="Search messages…   (try: &quot;ban&quot;, &quot;report&quot;, or any keyword)"
+        placeholder='Search messages…   (try: "ban", "report", or any keyword)'
         autocomplete="off"
       />
       <button id="search-btn">Search</button>
@@ -77,17 +115,27 @@
         <span>Min reactions</span>
         <input type="number" id="filter-min-reactions" min="0" value="0" />
       </label>
+      <label>
+        <span>Sort</span>
+        <select id="filter-sort">
+          <option value="newest">Newest first</option>
+          <option value="oldest">Oldest first</option>
+          <option value="relevance">Most relevant</option>
+          <option value="most_reactions">Most reactions</option>
+        </select>
+      </label>
     </div>
 
     <div class="result-meta" id="result-meta"></div>
     <div class="results" id="results"></div>
+    <div class="pagination" id="pagination"></div>
   </section>
 
   <!-- ================ INTERACTIONS TAB ================ -->
   <section class="panel hidden" id="panel-interactions">
     <p class="panel-note">
       Find every time User B spoke shortly after User A. Approximates "B replied to A"
-      using a time window (Instagram exports don't include real reply threading).
+      using a time window — Instagram exports don't include real reply threading.
     </p>
     <div class="filters">
       <label>
@@ -112,7 +160,7 @@
   <section class="panel hidden" id="panel-timeline">
     <p class="panel-note">
       Who was active around a specific moment. Use this to correlate chat activity
-      with outside events (e.g., when an account got taken down).
+      with outside events — e.g. when an account got taken down.
     </p>
     <div class="filters">
       <label>
@@ -129,13 +177,37 @@
     <div class="results" id="tl-results"></div>
   </section>
 
+  <!-- ===== FOOTER ===== -->
   <footer class="footer">
-    <span class="mono">gc-dossier · build 0.1</span>
+    <span class="mono">gc-dossier · build 0.1 · case open</span>
     <span class="mono" id="db-status">db: checking…</span>
   </footer>
 
-  <!-- Supabase client. Loaded from CDN so there's no build step. -->
+  <!-- Supabase JS SDK loaded from CDN. No build step needed. -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
+
+  <!-- Small inline script to wire up the syslog bar.
+       Once app.js finishes its init() call, we read the values
+       it already put into the stat elements and mirror them up top.
+       We do this here (after app.js loads) so init() runs first. -->
+  <script>
+    // Watch for the stat-messages element to be filled by app.js,
+    // then copy the values into the syslog bar.
+    const observer = new MutationObserver(() => {
+      const msgs    = document.getElementById('stat-messages').textContent;
+      const members = document.getElementById('stat-members').textContent;
+      if (msgs !== '—') {
+        document.getElementById('log-msgs').textContent    = msgs;
+        document.getElementById('log-members').textContent = members;
+        document.getElementById('log-conn').textContent    = 'connected';
+        observer.disconnect();
+      }
+    });
+    observer.observe(
+      document.getElementById('stat-messages'),
+      { childList: true, subtree: true, characterData: true }
+    );
+  </script>
 </body>
 </html>

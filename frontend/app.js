@@ -37,6 +37,7 @@ let searchState = {
   startDate:   null,
   endDate:     null,
   minRxns:     0,
+  sortOrder:   'newest',  // 'newest' | 'oldest' | 'relevance' | 'most_reactions'
   totalCount:  0,
   currentPage: 1,
 };
@@ -123,6 +124,7 @@ async function startSearch() {
   const startDate = document.getElementById('filter-start').value;
   const endDate   = document.getElementById('filter-end').value;
   const minRxns   = parseInt(document.getElementById('filter-min-reactions').value, 10) || 0;
+  const sortOrder = document.getElementById('filter-sort').value || 'newest';
 
   // Guard: require at least one filter. An unfiltered scan of 484k rows
   // with ts_rank ordering will always time out on the free tier.
@@ -152,6 +154,7 @@ async function startSearch() {
     startDate: startDate ? new Date(startDate).toISOString() : null,
     endDate:   endDate   ? new Date(endDate + 'T23:59:59').toISOString() : null,
     minRxns,
+    sortOrder,
     totalCount:  0,
     currentPage: 1,
   };
@@ -184,8 +187,8 @@ async function fetchTotalCount() {
     return;
   }
 
-  // The RPC returns one row: { total: 2312 }
-  searchState.totalCount = data?.[0]?.total ?? 0;
+  // The RPC returns the count directly.
+  searchState.totalCount = data ?? 0;
 }
 
 // fetchPage(n) fetches exactly PAGE_SIZE rows for page n, using the
@@ -209,6 +212,7 @@ async function fetchPage(pageNum) {
     start_date:    searchState.startDate,
     end_date:      searchState.endDate,
     min_reactions: searchState.minRxns,
+    sort_order:    searchState.sortOrder,
     result_limit:  PAGE_SIZE,
     result_offset: offset,
   });
