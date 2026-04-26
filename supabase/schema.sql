@@ -9,7 +9,9 @@
 -- Apply by pasting into Supabase Dashboard → SQL Editor → Run.
 --
 -- Last rebuilt from live database introspection: 2026-04-23
--- Last updated: 2026-04-24 (search_messages V3 + maintenance notes)
+-- Last updated: 2026-04-25 (added bio_name + aliases to members; parser
+--   reclassified 13 system_* message_type values, no schema change needed
+--   for that since message_type was already free-text TEXT)
 -- ============================================================================
 
 
@@ -79,6 +81,17 @@ CREATE INDEX IF NOT EXISTS idx_reactions_emoji   ON reactions (emoji);
 -- Human-curated metadata about every sender in the chat. Separate from the
 -- messages table so we can edit it without touching the raw data.
 --
+-- Three name fields, each serving a different purpose:
+--   * username  — the Instagram handle, never changes. Primary key.
+--   * bio_name  — display name from Instagram's sender_name field, auto-
+--                 extracted from system events during parsing. Single value.
+--                 Nullable because we don't always have it.
+--   * alias     — user-curated friendly display name (single value, hand-edited
+--                 from the Members tab). The "one name I want shown in the UI."
+--   * aliases   — array of additional chat nicknames the group uses for this
+--                 person ("the plate", "jacob", etc). Powers the @-mention
+--                 picker so typing any known nickname resolves to the handle.
+--
 -- status values: 'unrecognized' (default for new/unknown), 'active',
 -- 'banned', 'removed', 'reporter-suspected'. Free-text check constraint
 -- defined inline below — we don't use a strict enum to make it easy to add
@@ -86,7 +99,9 @@ CREATE INDEX IF NOT EXISTS idx_reactions_emoji   ON reactions (emoji);
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS members (
     username    TEXT        PRIMARY KEY,
-    alias       TEXT        NULL,                                     -- friendly display name
+    alias       TEXT        NULL,                                     -- friendly display name (curated)
+    bio_name    TEXT        NULL,                                     -- display name from Instagram (auto)
+    aliases     TEXT[]      NOT NULL DEFAULT '{}',                    -- chat nicknames (multi-valued)
     status      TEXT        NOT NULL DEFAULT 'unrecognized'
                 CHECK (status IN ('unrecognized', 'active', 'banned', 'removed', 'reporter-suspected')),
     notes       TEXT        NULL,                                     -- free-text
@@ -94,7 +109,11 @@ CREATE TABLE IF NOT EXISTS members (
     updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_members_status ON members (status);
+CREATE INDEX IF NOT EXISTS idx_members_status  ON members (status);
+-- GIN index on aliases enables fast @-mention picker queries:
+--   SELECT * FROM members WHERE 'the plate' = ANY(aliases);
+-- Without this, every alias lookup is a full sequential scan over members.
+CREATE INDEX IF NOT EXISTS idx_members_aliases ON members USING GIN (aliases);
 
 
 -- ============================================================================
