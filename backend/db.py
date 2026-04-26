@@ -90,12 +90,13 @@ def insert_messages(parsed_messages):
 
     Each dict must have the shape produced by parser.py:
         {
-          'id': str,          # MD5 hash — the PRIMARY KEY
+          'id': str,            # MD5 hash — the PRIMARY KEY
           'sender': str,
           'timestamp_ms': int,
-          'timestamp': str,   # '2024-03-15 14:32:07' format
+          'timestamp': str,     # '2024-03-15 14:32:07' format
           'content': str,
           'media_type': str | None,
+          'message_type': str,  # 'message' (default) or 'system_*' for events
           'reactions': list[{'emoji': str, 'actor': str}],
         }
 
@@ -125,6 +126,7 @@ def insert_messages(parsed_messages):
             msg["timestamp"],      # Postgres parses this string into TIMESTAMPTZ
             msg["content"],
             msg["media_type"],     # may be None — Postgres handles that
+            msg.get("message_type", "message"),  # 'message' or one of the system_* labels
         ))
         # A message with zero reactions just contributes nothing here.
         for rxn in msg.get("reactions", []):
@@ -147,7 +149,7 @@ def insert_messages(parsed_messages):
             # skipped. The RETURNING id clause gives us back the ids of
             # rows that WERE inserted, so we can count them accurately.
             msg_insert_sql = """
-                INSERT INTO messages (id, sender, timestamp_ms, timestamp, content, media_type)
+                INSERT INTO messages (id, sender, timestamp_ms, timestamp, content, media_type, message_type)
                 VALUES %s
                 ON CONFLICT (id) DO NOTHING
                 RETURNING id

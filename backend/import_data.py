@@ -49,11 +49,15 @@ def main():
     log.info(f"Parsing groupchat JSON from: {folder}")
     t0 = time.perf_counter()
 
-    # parser.parse_groupchat already handles reading every message_*.json
-    # file in the folder and returning one flat list of parsed message dicts.
-    messages = parse_groupchat(str(folder))
+    # parser.parse_groupchat reads every message_*.json file in the folder.
+    # It returns a tuple: (list of parsed message dicts, dict of confident
+    # name->handle mappings derived from system events). The mappings are
+    # collected for free during parsing and will be used later to populate
+    # members.bio_name; for now we just log the count.
+    messages, name_handle_mappings = parse_groupchat(str(folder))
     t_parse = time.perf_counter() - t0
     log.info(f"Parsed {len(messages):,} messages in {t_parse:.1f}s.")
+    log.info(f"Collected {len(name_handle_mappings)} confident name->handle mappings.")
 
     if not messages:
         log.info("No messages found. Exiting.")
