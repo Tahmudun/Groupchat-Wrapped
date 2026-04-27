@@ -8,8 +8,12 @@
 --
 -- Apply by pasting into Supabase Dashboard → SQL Editor → Run.
 --
--- Last rebuilt from live database introspection: 2026-04-23
--- Last updated: 2026-04-25 (added bio_name + aliases to members; parser
+-- Last rebuilt from live database introspection: 2026-04-27
+-- Last updated: 2026-04-27 (synced members_status_check constraint with
+--   live database — actual values are 'recognized', 'unrecognized',
+--   'deleted', 'removed'; backfilled 749 members with zero real messages
+--   to status='removed')
+-- Previous update: 2026-04-25 (added bio_name + aliases to members; parser
 --   reclassified 13 system_* message_type values, no schema change needed
 --   for that since message_type was already free-text TEXT)
 -- ============================================================================
@@ -92,10 +96,18 @@ CREATE INDEX IF NOT EXISTS idx_reactions_emoji   ON reactions (emoji);
 --                 person ("the plate", "jacob", etc). Powers the @-mention
 --                 picker so typing any known nickname resolves to the handle.
 --
--- status values: 'unrecognized' (default for new/unknown), 'active',
--- 'banned', 'removed', 'reporter-suspected'. Free-text check constraint
--- defined inline below — we don't use a strict enum to make it easy to add
--- new categories from the Members tab without a migration.
+-- status values:
+--   'unrecognized' — default for new rows; person whose identity we haven't
+--                    confirmed yet. Visible in dropdowns/search by default.
+--   'recognized'   — identity confirmed (curated via Members tab).
+--   'removed'      — person who appears in members but has zero real messages
+--                    (only system_* event activity, or no activity at all).
+--                    Backfilled 2026-04-27. Hidden from sender dropdown and
+--                    default search results; pass include_inactive=true to RPCs
+--                    to override.
+--   'deleted'      — soft-delete for admin removal of a member row.
+-- Constraint is intentionally a CHECK rather than an ENUM to make it easy
+-- to add new categories without a type migration.
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS members (
     username    TEXT        PRIMARY KEY,
@@ -103,7 +115,7 @@ CREATE TABLE IF NOT EXISTS members (
     bio_name    TEXT        NULL,                                     -- display name from Instagram (auto)
     aliases     TEXT[]      NOT NULL DEFAULT '{}',                    -- chat nicknames (multi-valued)
     status      TEXT        NOT NULL DEFAULT 'unrecognized'
-                CHECK (status IN ('unrecognized', 'active', 'banned', 'removed', 'reporter-suspected')),
+                CHECK (status IN ('recognized', 'unrecognized', 'deleted', 'removed')),
     notes       TEXT        NULL,                                     -- free-text
     created_at  TIMESTAMPTZ DEFAULT NOW(),
     updated_at  TIMESTAMPTZ DEFAULT NOW()
