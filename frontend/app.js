@@ -56,22 +56,40 @@ document.querySelectorAll('.tab').forEach(btn => {
 });
 
 
+// Wraps a Supabase call in a hard timeout. On free-tier cold start, queries
+// can hang indefinitely (no rejection, no resolution). Without this, init()
+// stays pending forever and the retry loop never cycles.
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
 // ─── INIT: load stats + populate dropdowns ────────────────────────────────────
 async function init() {
   try {
-    // count: 'exact' + head: true runs a COUNT(*) in Postgres without
-    // returning any rows — very fast, no row-limit issues.
-    const { count: msgCount, error: mErr } = await sb
-      .from('messages')
-      .select('*', { count: 'exact', head: true });
+    console.log('init: starting');
+    // Fire both queries simultaneously — no reason to wait on the count
+    // before starting the senders fetch.
+    const [
+      { count: msgCount, error: mErr },
+      { data: senders,   error: sErr },
+    ] = await Promise.all([
+      withTimeout(
+        sb.from('messages').select('*', { count: 'exact', head: true }),
+        8000, 'messages count'
+      ),
+      withTimeout(
+        sb.rpc('get_distinct_senders'),
+        8000, 'get_distinct_senders'
+      ),
+    ]);
     if (mErr) throw mErr;
-    document.getElementById('stat-messages').textContent = msgCount.toLocaleString();
-
-    // get_distinct_senders() is a SQL function we created that runs
-    // SELECT DISTINCT sender inside Postgres. This avoids the 1,000-row
-    // default cap that was causing us to only see 11 senders.
-    const { data: senders, error: sErr } = await sb.rpc('get_distinct_senders');
     if (sErr) throw sErr;
+    console.log('init: ok — messages', msgCount, '· senders', senders?.length);
 
     document.getElementById('stat-members').textContent = senders.length.toLocaleString();
 
@@ -83,8 +101,63 @@ async function init() {
   } catch (err) {
     console.error(err);
     document.getElementById('db-status').textContent = 'db: ERROR';
-    alert('Could not reach Supabase. Check the browser console for details.');
+    showError('Could not reach the database. Check your connection and refresh.');
+    throw err;  // re-throw so caller knows to retry
   }
+}
+
+// Show the error banner. Called from init() and anywhere else
+// we need to surface a user-facing error. Replaces alert().
+function showError(message) {
+  const banner = document.getElementById('error-banner');
+  const msgEl  = document.getElementById('error-msg');
+  if (!banner || !msgEl) return;
+  msgEl.textContent = message;
+  banner.classList.remove('hidden');
+}
+
+function hideError() {
+  const banner = document.getElementById('error-banner');
+  if (banner) banner.classList.add('hidden');
+}
+
+// Wire up dismiss button. Done at script load — element is already in DOM
+// because this script tag is at the bottom of body.
+document.getElementById('error-dismiss')?.addEventListener('click', hideError);
+
+// initWithRetry drives init() with plain setTimeout-based retries.
+// We previously used async/await inside a for-loop; the await continuation
+// after Promise.race silently stalled on cold load (Safari + Supabase SDK
+// interaction). Using setTimeout means each attempt is a fresh macrotask
+// with no dependency on the prior async context.
+function initWithRetry() {
+  const DELAYS = [0, 500, 2000, 5000, 10000]; // ms before each attempt
+  let attempt = 0;
+
+  function schedule() {
+    if (attempt >= DELAYS.length) {
+      console.error('initWithRetry: all attempts exhausted');
+      return;
+    }
+    const delay = DELAYS[attempt++];
+    console.log(`initWithRetry: attempt ${attempt}/${DELAYS.length} in ${delay}ms`);
+    setTimeout(run, delay);
+  }
+
+  function run() {
+    console.log(`initWithRetry: running attempt ${attempt}`);
+    init()
+      .then(() => {
+        hideError();
+        console.log('initWithRetry: success on attempt', attempt);
+      })
+      .catch(err => {
+        console.warn(`initWithRetry: attempt ${attempt} failed —`, err.message);
+        schedule();
+      });
+  }
+
+  schedule();
 }
 
 function populateSenderDropdown(id, senders, includeAny) {
@@ -105,7 +178,16 @@ function populateSenderDropdown(id, senders, includeAny) {
   }
 }
 
-init();
+// Wait for the DOM to be fully ready before initializing. This avoids the
+// cold-start race where the Supabase CDN script is loaded but its internal
+// session bootstrap is mid-flight when our queries fire. DOMContentLoaded
+// gives the CDN script a moment to finish setting up the supabase global.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initWithRetry);
+} else {
+  // DOM already ready (script ran late) — just go.
+  initWithRetry();
+}
 
 
 // ─── SEARCH TAB ───────────────────────────────────────────────────────────────

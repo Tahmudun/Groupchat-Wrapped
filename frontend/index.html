@@ -8,6 +8,15 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <!-- ===== ERROR BANNER =====
+     Hidden by default. app.js shows this when something fails
+     (mostly the cold-start connection issue). Replaces the
+     alert() popup which felt awful on mobile. -->
+  <div class="error-banner hidden" id="error-banner">
+    <span class="tag-err">[ERR]</span>
+    <span class="msg-text" id="error-msg">Something went wrong.</span>
+    <button class="dismiss" id="error-dismiss">DISMISS</button>
+  </div>
 
   <!-- ===== SYSTEM LOG BAR =====
        This bar sits at the very top of the page above the masthead.
