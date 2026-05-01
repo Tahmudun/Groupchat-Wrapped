@@ -1,392 +1,1406 @@
 /* ============================================================
    GC Dossier — stylesheet
-   Aesthetic: newsroom dossier / investigative archive.
-   High contrast, serif headlines, mono metadata, warm paper.
+   Aesthetic: classified intelligence terminal.
+   Dark charcoal base (not black), monospace throughout,
+   green for live/healthy signals, red for warnings only.
    ============================================================ */
 
+/* ---------- Google Fonts ----------
+   We're importing two fonts:
+   - "Share Tech Mono" : a clean, readable monospace font with a
+     slightly military/terminal feel. Used for everything.
+   - "Bebas Neue"      : a tall, bold condensed display font.
+     Used only for the big "GC DOSSIER" wordmark.
+   We load these from Google's CDN so no files to download. */
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
+
+/* ---------- CSS Custom Properties (variables) ----------
+   Defining all colors and fonts in one place means if you
+   want to tweak a shade, you change it here and it updates
+   everywhere on the page automatically. */
 :root {
-  /* Paper and ink */
-  --paper:       #f4efe6;
-  --paper-edge:  #ebe3d3;
-  --ink:         #1a1612;
-  --ink-soft:    #544c42;
-  --ink-faint:   #8a8174;
-  --rule:        #c8bea8;
+  /* --- Base surfaces ---
+     We use a layered charcoal system, not pure black.
+     Pure black (#000) feels harsh and flat. These greys
+     have warmth and create natural depth between sections. */
+  --bg-page:      #1a1a1a;   /* outermost page background */
+  --bg-surface:   #212121;   /* main content areas */
+  --bg-raised:    #2a2a2a;   /* slightly lifted elements like filters */
+  --bg-input:     #252525;   /* search boxes, inputs */
+  --bg-header:    #181818;   /* topbar, footer — slightly darker to frame */
 
-  /* Accents */
-  --accent:      #b8341f;   /* stamp red */
-  --accent-soft: #e7d3cb;
-  --highlight:   #f0d564;   /* redaction / hit-highlight yellow */
+  /* --- Borders ---
+     Subtle dividers between sections. Dark enough to not
+     scream, visible enough to create structure. */
+  --border:       #2e2e2e;   /* standard divider */
+  --border-soft:  #262626;   /* even subtler, used inside sections */
 
-  /* Type */
-  --font-display: 'Fraunces', 'Times New Roman', serif;
-  --font-body:    'Fraunces', Georgia, serif;
-  --font-mono:    'JetBrains Mono', 'SF Mono', Consolas, monospace;
+  /* --- Text hierarchy ---
+     Four levels of text brightness. This is how you make
+     a dark UI readable — not by making everything bright,
+     but by using brightness to signal importance. */
+  --text-primary:   #e2e2e2;   /* main readable text — bright but not white */
+  --text-secondary: #888888;   /* labels, timestamps, supporting info */
+  --text-dim:       #444444;   /* very faint — hints, disabled, rules */
+  --text-white:     #f0f0f0;   /* reserved for the most important numbers */
 
-  /* Sizing */
+  /* --- Accent colors ---
+     Green = system healthy, live, connected, active.
+     Red   = warnings, danger, confidential stamp only.
+     These colors have MEANING — don't use them decoratively. */
+  --green:        #4ade80;   /* healthy signal green */
+  --green-dim:    #1a3d2a;   /* dark green for [SYS] tag backgrounds */
+  --green-border: #2a6b42;   /* green-tinted borders */
+  --red:          #dc2626;   /* danger/warning red */
+  --red-dim:      #3d1a1a;   /* dark red for [WARN] tag backgrounds */
+
+  /* --- Highlight ---
+     Yellow for search hit highlights. Stands out on dark bg. */
+  --highlight:    #f0d564;
+
+  /* --- Fonts ---
+     Everything is monospace to maintain the terminal feel.
+     The display font is only for the wordmark. */
+  --font-mono:    'Share Tech Mono', 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+  --font-display: 'Bebas Neue', 'Impact', sans-serif;
+
+  /* --- Layout --- */
   --max-w: 1180px;
-  --radius: 2px;
+  --radius: 3px;
 }
 
+/* ---------- Reset & Base ---------- */
 * { box-sizing: border-box; }
 
 html, body {
   margin: 0;
   padding: 0;
-  background: var(--paper);
-  color: var(--ink);
-  font-family: var(--font-body);
-  font-size: 16px;
-  line-height: 1.5;
-  /* Subtle paper grain using a repeating noise-ish pattern */
-  background-image:
-    radial-gradient(circle at 20% 10%, rgba(0,0,0,0.015) 0%, transparent 40%),
-    radial-gradient(circle at 80% 90%, rgba(0,0,0,0.02) 0%, transparent 50%);
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.6;
+  /* A very subtle scanline texture — repeating horizontal lines
+     that are nearly invisible but add depth to the dark background.
+     The rgba value is extremely low opacity so it's a whisper, not a shout. */
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(255, 255, 255, 0.012) 2px,
+    rgba(255, 255, 255, 0.012) 4px
+  );
 }
 
-/* --------- Masthead --------- */
+/* ---------- System Log Bar ----------
+   This is the new element above the masthead.
+   Mimics a terminal boot sequence — shows live DB stats
+   as [SYS] log lines. Sits flush at the very top. */
+.syslog {
+  background: var(--bg-header);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 32px;
+  max-width: 100%;
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* Each individual log line */
+.log-line {
+  color: var(--text-dim);
+  letter-spacing: 0.03em;
+}
+
+/* [SYS] tag — green tinted, signals healthy system output */
+.log-line .tag-sys {
+  color: var(--green);
+  background: var(--green-dim);
+  padding: 0 5px;
+  border-radius: 2px;
+  margin-right: 4px;
+}
+
+/* [WARN] tag — red tinted, signals something to pay attention to */
+.log-line .tag-warn {
+  color: var(--red);
+  background: var(--red-dim);
+  padding: 0 5px;
+  border-radius: 2px;
+  margin-right: 4px;
+}
+
+/* Bright values inside log lines — the actual numbers pop */
+.log-line .val {
+  color: var(--green);
+}
+
+/* Red values — used for warning quantities like deleted account count */
+.log-line .val-red {
+  color: var(--red);
+}
+
+/* Muted connectors like "·" between values */
+.log-line .sep {
+  color: var(--text-dim);
+  margin: 0 4px;
+}
+
+/* ---------- Masthead ---------- */
 .masthead {
   max-width: var(--max-w);
   margin: 0 auto;
-  padding: 48px 32px 24px;
+  padding: 28px 32px 20px;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  border-bottom: 3px double var(--ink);
+  /* Double border at the bottom — classic document/dossier detail */
+  border-bottom: 1px solid var(--border);
   gap: 32px;
+  background: var(--bg-surface);
 }
 
-.masthead h1 {
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: clamp(40px, 7vw, 72px);
-  letter-spacing: -0.02em;
-  margin: 4px 0 0;
-  line-height: 0.95;
-}
-
+/* The CONFIDENTIAL stamp — red border, slightly rotated */
 .stamp {
   display: inline-block;
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 11px;
-  letter-spacing: 0.25em;
-  color: var(--accent);
-  border: 2px solid var(--accent);
-  padding: 4px 10px;
-  transform: rotate(-2deg);
-  background: rgba(255,255,255,0.3);
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  color: var(--red);
+  border: 1.5px solid var(--red);
+  padding: 3px 8px;
+  transform: rotate(-2deg);    /* slight tilt = authentic rubber stamp feel */
+  opacity: 0.75;               /* not full opacity — worn stamp effect */
+  margin-bottom: 10px;
+  display: block;
+  width: fit-content;
+}
+
+/* The big wordmark */
+.masthead h1 {
+  font-family: var(--font-display);
+  font-weight: 400;             /* Bebas Neue only has one weight */
+  font-size: clamp(48px, 7vw, 80px);
+  letter-spacing: 0.05em;
+  margin: 0;
+  line-height: 1;
+  color: var(--text-white);
+}
+
+/* Underscore accent — the red part of GC_DOSSIER */
+.masthead h1 span {
+  color: var(--red);
 }
 
 .sub {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.1em;
-  color: var(--ink-soft);
-  margin-top: 12px;
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  color: var(--text-secondary);
+  margin-top: 10px;
   text-transform: uppercase;
 }
 
+/* Right side of the masthead — the two big stat numbers */
 .masthead-right {
   display: flex;
-  gap: 32px;
-  padding-bottom: 8px;
+  gap: 0;
+  padding-bottom: 4px;
 }
 
 .stat-block {
   text-align: right;
-  border-right: 1px solid var(--rule);
-  padding-right: 32px;
+  /* Right border creates a vertical divider between stats */
+  border-right: 1px solid var(--border);
+  padding: 0 28px;
 }
-.stat-block:last-child { border-right: none; padding-right: 0; }
+.stat-block:last-child {
+  border-right: none;
+  padding-right: 0;
+}
 
 .stat-label {
-  font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9px;
   letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: var(--ink-faint);
-}
-.stat-value {
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: 32px;
-  line-height: 1;
-  margin-top: 4px;
-  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
 }
 
-/* --------- Tabs --------- */
+/* The big numbers — white and large so they're instantly readable */
+.stat-value {
+  font-family: var(--font-mono);
+  font-size: 36px;
+  line-height: 1.1;
+  margin-top: 2px;
+  color: var(--text-white);
+  font-variant-numeric: tabular-nums;  /* digits all same width — no shifting */
+}
+
+/* ---------- Tabs ---------- */
 .tabs {
   max-width: var(--max-w);
   margin: 0 auto;
-  padding: 16px 32px 0;
+  padding: 0 32px;
   display: flex;
-  gap: 2px;
-  border-bottom: 1px solid var(--rule);
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-header);
 }
+
 .tab {
   font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.15em;
+  font-size: 11px;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
   background: transparent;
   border: none;
-  border-bottom: 3px solid transparent;
-  padding: 14px 20px;
+  /* The bottom border is what becomes the active indicator */
+  border-bottom: 2px solid transparent;
+  padding: 14px 20px 12px;
   cursor: pointer;
-  color: var(--ink-soft);
-  transition: all 0.15s;
-}
-.tab:hover { color: var(--ink); }
-.tab.active {
-  color: var(--ink);
-  border-bottom-color: var(--accent);
-  font-weight: 700;
+  color: var(--text-dim);
+  transition: color 0.15s, border-color 0.15s;
+  margin-bottom: -1px;   /* sits flush on the border-bottom of .tabs */
 }
 
-/* --------- Panels --------- */
+.tab:hover {
+  color: var(--text-secondary);
+}
+
+/* Active tab: bright text, green underline (green = active/live) */
+.tab.active {
+  color: var(--text-white);
+  border-bottom-color: var(--green);
+}
+
+/* ---------- Panels ---------- */
 .panel {
   max-width: var(--max-w);
   margin: 0 auto;
-  padding: 32px;
+  padding: 28px 32px;
+  background: var(--bg-surface);
 }
+
 .panel.hidden { display: none; }
 
+/* The italic description note at the top of Interactions/Timeline panels */
 .panel-note {
-  font-style: italic;
-  color: var(--ink-soft);
-  border-left: 3px solid var(--accent);
-  padding: 4px 0 4px 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  /* Left border in green — this is informational, not a warning */
+  border-left: 2px solid var(--green-border);
+  padding: 4px 0 4px 14px;
   margin: 0 0 24px;
   max-width: 720px;
+  font-style: italic;
 }
 
-/* --------- Search bar --------- */
+/* ---------- Search Bar ---------- */
 .search-bar {
   display: flex;
   gap: 8px;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
+
 .search-bar input {
   flex: 1;
-  font-family: var(--font-body);
-  font-size: 18px;
-  padding: 14px 18px;
-  background: #fffdf7;
-  border: 2px solid var(--ink);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  padding: 12px 16px;
+  background: var(--bg-input);
+  /* The left border in green acts like a terminal prompt bar */
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--green);
   border-radius: var(--radius);
-  color: var(--ink);
+  color: var(--text-primary);
   outline: none;
-}
-.search-bar input::placeholder { color: var(--ink-faint); font-style: italic; }
-.search-bar input:focus {
-  box-shadow: 4px 4px 0 var(--accent);
-  transform: translate(-2px, -2px);
-  transition: all 0.1s;
+  transition: border-color 0.15s;
 }
 
+.search-bar input::placeholder {
+  color: var(--text-dim);
+}
+
+/* On focus, the border brightens slightly */
+.search-bar input:focus {
+  border-color: var(--green-border);
+  border-left-color: var(--green);
+}
+
+/* Search button and any button inside .filters */
 .search-bar button,
-.filters button {
+.filters button:not(.ss-chip-x) {
   font-family: var(--font-mono);
-  font-weight: 700;
-  font-size: 13px;
-  letter-spacing: 0.15em;
+  font-size: 11px;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
-  background: var(--ink);
-  color: var(--paper);
-  border: 2px solid var(--ink);
-  padding: 0 24px;
+  /* Dark fill, green border — signals "go" without being loud */
+  background: var(--bg-raised);
+  color: var(--green);
+  border: 1px solid var(--green-border);
+  padding: 0 22px;
   cursor: pointer;
   border-radius: var(--radius);
-  transition: all 0.1s;
-}
-.search-bar button:hover,
-.filters button:hover {
-  background: var(--accent);
-  border-color: var(--accent);
+  transition: background 0.15s, color 0.15s;
 }
 
-/* --------- Filters --------- */
+.search-bar button:hover,
+.filters button:not(.ss-chip-x):hover {
+  background: var(--green-dim);
+  color: var(--green);
+  border-color: var(--green);
+}
+
+.search-bar button:disabled,
+.page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ---------- Filters ---------- */
 .filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px 24px;
-  margin-bottom: 28px;
-  padding: 20px;
-  background: rgba(255,255,255,0.4);
-  border: 1px solid var(--rule);
+  gap: 12px 20px;
+  margin-bottom: 24px;
+  padding: 16px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
+  align-items: flex-end;
 }
+
+/* Each filter is a column: label on top, input below */
 .filters label {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.filters label span { padding-left: 1px; }
+
+.filters input,
+.filters select {
   font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 7px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  min-width: 130px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.filters input:focus,
+.filters select:focus {
+  border-color: var(--green-border);
+}
+
+/* Select arrow color override for dark background */
+.filters select {
+  appearance: none;
+  /* Custom arrow using a small SVG data URI — white chevron */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23666'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+
+.filters button:not(.ss-chip-x) {
+  align-self: flex-end;
+  padding: 8px 18px;
+  min-height: 36px;
+}
+
+/* ---------- Result Meta ---------- */
+/* The small "X results (showing first 200)" line above results */
+.result-meta {
   font-size: 10px;
   letter-spacing: 0.15em;
   text-transform: uppercase;
-  color: var(--ink-soft);
-}
-.filters label span { padding-left: 2px; }
-.filters input,
-.filters select {
-  font-family: var(--font-body);
-  font-size: 15px;
-  padding: 8px 10px;
-  background: #fffdf7;
-  border: 1px solid var(--ink);
-  border-radius: var(--radius);
-  color: var(--ink);
-  min-width: 140px;
-}
-.filters button {
-  align-self: end;
-  padding: 10px 20px;
-  min-height: 38px;
-}
-
-/* --------- Results --------- */
-.result-meta {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  margin-bottom: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
   min-height: 14px;
 }
 
+/* ---------- Message Results ---------- */
 .results {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  background: var(--rule);
-  border: 1px solid var(--rule);
+  gap: 1px;                    /* 1px gap shows the bg-page color as a divider */
+  background: var(--border);   /* the "gaps" between rows are just the bg showing through */
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
 }
 
+/* A single message row */
 .msg {
   display: grid;
-  grid-template-columns: 180px 1fr auto;
-  gap: 24px;
-  padding: 16px 20px;
-  background: #fffdf7;
+  /* Left column: sender + timestamp (fixed 160px)
+     Middle: message content (stretches)
+     Right: badges (wraps to content) */
+  grid-template-columns: 160px 1fr auto;
+  gap: 20px;
+  padding: 14px 18px;
+  background: var(--bg-surface);
   align-items: start;
 }
-.msg:nth-child(even) { background: #f9f4e8; }
 
-.msg .meta {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.4;
+/* Alternating rows are slightly different — subtle, not striped-shirt obvious */
+.msg:nth-child(even) {
+  background: var(--bg-raised);
 }
+
+/* Left column: sender name and timestamp */
+.msg .meta {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .msg .sender {
   font-weight: 700;
-  color: var(--ink);
+  color: var(--text-white);
+  display: block;
+  /* Truncate very long usernames */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msg .ts {
+  color: var(--text-secondary);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  margin-top: 2px;
   display: block;
 }
-.msg .ts {
-  color: var(--ink-faint);
-  font-size: 11px;
-  letter-spacing: 0.05em;
-}
+
+/* Middle column: the actual message text */
 .msg .content {
-  font-family: var(--font-body);
-  font-size: 16px;
-  line-height: 1.55;
-  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-primary);
   word-wrap: break-word;
 }
+
+/* Search highlight — yellow stands out against dark background */
 .msg .content em.hit {
   background: var(--highlight);
+  color: #1a1612;             /* dark text on yellow so it's readable */
   font-style: normal;
   padding: 0 2px;
+  border-radius: 1px;
 }
+
+/* Right column: media type and reaction count badges */
 .msg .badges {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  align-items: end;
-  font-family: var(--font-mono);
-  font-size: 10px;
+  align-items: flex-end;
+  font-size: 9px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
+
 .msg .badge {
-  padding: 2px 8px;
-  border: 1px solid var(--ink-soft);
-  color: var(--ink-soft);
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
   border-radius: var(--radius);
   white-space: nowrap;
 }
-.msg .badge.media { border-color: var(--accent); color: var(--accent); }
-.msg .badge.rxn   { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 
-/* Interaction pair view */
-.pair {
-  background: #fffdf7;
-  padding: 16px 20px;
-  border-left: 3px solid var(--accent);
+/* Media badge: green border — media is "healthy" data */
+.msg .badge.media {
+  border-color: var(--green-border);
+  color: var(--green);
 }
-.pair:nth-child(even) { background: #f9f4e8; }
+
+/* Reaction badge: filled green — positive signal */
+.msg .badge.rxn {
+  background: var(--green-dim);
+  color: var(--green);
+  border-color: var(--green-border);
+}
+
+/* ---------- Interaction Pairs ---------- */
+.pair {
+  background: var(--bg-surface);
+  padding: 14px 18px;
+  /* Red left border — interactions are potentially sensitive data */
+  border-left: 2px solid var(--red);
+  margin-bottom: 1px;
+}
+
+.pair:nth-child(even) { background: var(--bg-raised); }
+
 .pair .line {
   display: grid;
-  grid-template-columns: 140px 1fr;
-  gap: 16px;
-  padding: 6px 0;
-  font-size: 15px;
-}
-.pair .line.b { color: var(--ink); border-top: 1px dashed var(--rule); margin-top: 6px; padding-top: 10px; }
-.pair .line .who { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); letter-spacing: 0.1em; text-transform: uppercase; }
-.pair .gap {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--accent);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  margin-top: 8px;
+  grid-template-columns: 130px 1fr;
+  gap: 14px;
+  padding: 5px 0;
+  font-size: 13px;
+  color: var(--text-primary);
 }
 
-/* Activity table */
+/* The second message in a pair — dashed divider between the two */
+.pair .line.b {
+  border-top: 1px dashed var(--border);
+  margin-top: 6px;
+  padding-top: 10px;
+  color: var(--text-primary);
+}
+
+/* Who sent it + timestamp */
+.pair .line .who {
+  font-size: 10px;
+  color: var(--text-secondary);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* ---------- Activity Timeline Rows ---------- */
 .activity-row {
   display: grid;
-  grid-template-columns: 1fr 80px 200px;
+  grid-template-columns: 1fr 80px 220px;
   gap: 16px;
-  padding: 12px 20px;
-  background: #fffdf7;
-  font-family: var(--font-mono);
-  font-size: 13px;
+  padding: 11px 18px;
+  background: var(--bg-surface);
+  font-size: 12px;
   align-items: center;
+  border-bottom: 1px solid var(--border-soft);
 }
-.activity-row:nth-child(even) { background: #f9f4e8; }
-.activity-row .name { font-family: var(--font-body); font-size: 15px; font-weight: 600; }
-.activity-row .count { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
-.activity-row .range { color: var(--ink-faint); font-size: 11px; }
 
-/* --------- Footer --------- */
+.activity-row:nth-child(even) { background: var(--bg-raised); }
+
+.activity-row .name {
+  font-size: 14px;
+  color: var(--text-white);
+  font-weight: 700;
+  min-width: 0;              /* grid cells default to min-width:auto, which prevents shrinking */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-row .count {
+  text-align: right;
+  font-weight: 700;
+  color: var(--green);              /* count in green — positive data */
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-row .range {
+  color: var(--text-secondary);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+}
+
+/* ---------- Footer ---------- */
 .footer {
   max-width: var(--max-w);
-  margin: 48px auto 32px;
-  padding: 16px 32px;
-  border-top: 1px solid var(--rule);
+  margin: 0 auto;
+  padding: 12px 32px;
+  border-top: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--ink-faint);
-  letter-spacing: 0.1em;
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.15em;
   text-transform: uppercase;
+  background: var(--bg-header);
+}
+
+/* DB status — will be green when connected, shown by app.js */
+#db-status {
+  color: var(--text-secondary);
 }
 
 .mono { font-family: var(--font-mono); }
 
-/* --------- Responsive --------- */
+
+/* ---------- Pagination ---------- */
+/* The row of page buttons below search results. */
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 16px 0 8px;
+  flex-wrap: wrap;
+}
+
+/* Each individual page button */
+.page-btn {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 11px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  min-width: 36px;
+  text-align: center;
+}
+
+.page-btn:hover:not(.disabled):not(.active) {
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border-color: var(--green-border);
+}
+
+/* The currently active page — highlighted in green */
+.page-btn.active {
+  background: var(--green-dim);
+  color: var(--green);
+  border-color: var(--green-border);
+  cursor: default;
+}
+
+/* Disabled Prev/Next buttons — greyed out, no pointer */
+.page-btn.disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* The … gap between page number groups */
+.page-ellipsis {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 6px 4px;
+}
+
+/* ---------- Responsive ---------- */
 @media (max-width: 860px) {
-  .masthead { flex-direction: column; align-items: flex-start; }
-  .masthead-right { gap: 16px; }
-  .stat-block { border-right: none; padding-right: 0; text-align: left; }
+  .syslog { padding: 8px 16px; }
+  .masthead { flex-direction: column; align-items: flex-start; padding: 20px 16px; }
+  .masthead-right { gap: 0; }
+  .stat-block { border-right: none; padding-right: 16px; text-align: left; }
+  .panel { padding: 20px 16px; }
+  .tabs { padding: 0 16px; }
+  .footer { padding: 12px 16px; }
   .msg { grid-template-columns: 1fr; }
   .msg .badges { flex-direction: row; }
+  .activity-row { grid-template-columns: 1fr 60px; }
+  .activity-row .range { display: none; }
+}
+/* ============================================================
+   PATCH 2026-04-28 — Mobile polish + error banner
+   Append this to the bottom of style.css.
+   Adds:
+   - 600px phone breakpoint (was only 860px tablet breakpoint)
+   - Larger touch targets for buttons, tabs, page nav
+   - Inline error banner (replaces alert() in app.js)
+   - Better focus-visible styles for keyboard nav
+   ============================================================ */
+
+
+/* ---------- Error Banner ----------
+   Replaces the alert() popup. Sits above the masthead when shown,
+   slides down smoothly, dismissible. Used for connection failures
+   and other user-facing errors. Hidden by default. */
+.error-banner {
+  display: none;
+  background: var(--red-dim);
+  border-bottom: 1px solid var(--red);
+  color: var(--text-primary);
+  padding: 10px 32px;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.error-banner.hidden { display: none; }
+
+.error-banner .tag-err {
+  color: var(--red);
+  background: var(--bg-page);
+  border: 1px solid var(--red);
+  padding: 1px 6px;
+  border-radius: 2px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  flex-shrink: 0;
+}
+
+.error-banner .msg-text { flex: 1; }
+
+.error-banner .dismiss {
+  background: transparent;
+  border: 1px solid var(--red);
+  color: var(--red);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  letter-spacing: 0.1em;
+  flex-shrink: 0;
+}
+
+.error-banner .dismiss:hover {
+  background: var(--red);
+  color: var(--bg-page);
+}
+
+
+/* ---------- Focus-visible ----------
+   Subtle green outline when navigating with keyboard.
+   :focus-visible only triggers for keyboard focus, not mouse clicks. */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+.tab:focus-visible,
+.page-btn:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 1px;
+}
+
+
+/* ---------- Phone breakpoint (≤600px) ----------
+   Real phones (375–430px) plus small tablets. Most aggressive
+   layout changes happen here. The existing 860px breakpoint
+   above this handles tablets. */
+@media (max-width: 600px) {
+
+  /* Body padding kicks in at edges so content isn't flush */
+  html, body { font-size: 13px; }
+
+  /* Syslog bar: stack each log line, smaller font, tighter spacing.
+     The flexbox direction is already column from base styles, so we
+     just shrink and tighten. */
+  .syslog {
+    padding: 6px 12px;
+    font-size: 10px;
+    gap: 2px;
+  }
+  .log-line .sep { margin: 0 2px; }
+
+  /* Error banner narrower padding */
+  .error-banner {
+    padding: 8px 12px;
+    font-size: 11px;
+    flex-wrap: wrap;
+  }
+
+  /* Masthead: tighten everything, smaller stat blocks */
+  .masthead {
+    padding: 16px 12px;
+    gap: 16px;
+  }
+
+  .masthead h1 {
+    /* Override the clamp on phone — it was sticking at 48px which
+       crowds the small viewport. Hard cap smaller. */
+    font-size: 40px;
+  }
+
+  .stamp {
+    font-size: 9px;
+    padding: 2px 6px;
+  }
+
+  .sub {
+    font-size: 10px;
+    margin-top: 6px;
+  }
+
+  .masthead-right {
+    width: 100%;
+    flex-direction: row;          /* side-by-side at phone, not stacked */
+    justify-content: flex-start;
+    gap: 24px;
+  }
+
+  .stat-block {
+    padding: 0;
+    text-align: left;
+  }
+
+  .stat-value {
+    font-size: 26px;
+  }
+
+  .stat-label {
+    font-size: 8px;
+  }
+
+  /* Tabs: full-width, even spacing, larger touch targets */
+  .tabs {
+    padding: 0;
+    justify-content: space-around;
+  }
+
+  .tab {
+    flex: 1;
+    padding: 14px 8px;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-align: center;
+  }
+
+  /* Panels: tight edges */
+  .panel {
+    padding: 16px 12px;
+  }
+
+  /* Search bar: input takes full width, button below */
+  .search-bar {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .search-bar input,
+  .search-bar button {
+    width: 100%;
+    min-height: 44px;             /* touch target minimum */
+    font-size: 16px;              /* prevents iOS Safari from auto-zooming on focus */
+  }
+
+  /* Filters: each filter takes full width */
+  .filters {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .filters label {
+    width: 100%;
+  }
+
+  .filters input,
+  .filters select {
+    width: 100%;
+    min-width: 0;
+    min-height: 40px;             /* touch target */
+    font-size: 16px;              /* prevents iOS Safari from auto-zooming on focus */
+  }
+
+  .filters button:not(.ss-chip-x) {
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 18px;
+  }
+
+  /* Message rows: still single column, but content gets more room.
+     Badges go to a row below content. */
+  .msg {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 12px 14px;
+  }
+
+  .msg .meta {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .msg .sender { display: inline; font-size: 13px; }
+  .msg .ts     { display: inline; font-size: 10px; margin-top: 0; }
+
+  .msg .badges {
+    flex-direction: row;
+    flex-wrap: wrap;              /* prevent overflow when many badges */
+    gap: 4px;
+    align-items: flex-start;
+  }
+
+  /* Pagination: bigger tap targets, less crowded */
+  .pagination {
+    gap: 3px;
+    padding: 16px 0;
+    justify-content: center;
+  }
+
+  .page-btn {
+    min-width: 40px;              /* touch-friendly */
+    min-height: 40px;
+    padding: 8px 10px;
+    font-size: 11px;
+    /* On phone, the row of pages can get crowded. Hide all but
+       Prev/active/Next via a JS check, OR let them wrap naturally —
+       the flex-wrap on .pagination already handles that. */
+  }
+
+  /* Activity rows: drop the 2-column grid, stack everything */
+  .activity-row {
+    grid-template-columns: 1fr 60px;
+    padding: 10px 12px;
+  }
+
+  /* Pair (Interactions) tighter padding */
+  .pair {
+    padding: 12px 14px;
+  }
+
+  .pair .line {
+    grid-template-columns: 90px 1fr;
+    gap: 10px;
+    font-size: 12px;
+  }
+
+  /* Footer: stack the two halves */
+  .footer {
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    text-align: center;
+    align-items: center;
+  }
+
+  /* Panel notes: less padding */
+  .panel-note {
+    padding-left: 10px;
+    font-size: 11px;
+  }
+
+  /* Confidential stamp: smaller, less rotation
+     (looks worse on small screens at -2deg) */
+  .stamp {
+    transform: rotate(-1deg);
+  }
+}
+
+
+/* ---------- Touch target enforcement (all viewports) ----------
+   Minimum 36px height on interactive elements for easier tapping
+   even on tablets. Doesn't override the 44px phone-specific rules. */
+button,
+input[type="text"],
+input[type="number"],
+input[type="date"],
+input[type="datetime-local"],
+select {
+  min-height: 36px;
+}
+
+
+/* ---------- Searchable Sender Dropdown ----------
+   .ss-wrap  = the styled container (replaces the old <select> visually)
+   .ss-chip  = pill shown when a sender is selected
+   .ss-inner-inp = the transparent text field inside the wrap
+   .ss-list  = the absolutely-positioned dropdown list */
+
+.ss-wrap {
+  position: relative;       /* anchor for the absolute .ss-list */
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 8px;
+  min-height: 36px;
+  min-width: 130px;
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: text;
+  transition: border-color 0.15s;
+}
+
+.ss-wrap:focus-within {
+  border-color: var(--green-border);
+}
+
+/* Chip shown when a sender is selected */
+.ss-chip {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 4px 2px 8px;
+  background: var(--green-dim);
+  border: 1px solid var(--green-border);
+  border-radius: var(--radius);
+  color: var(--green);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  /* When input is hidden (chip shown), chip should fill the wrap so flex: 1
+     on chip-label has a defined container width to work against. */
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.ss-chip[hidden] { display: none; }
+
+.ss-chip-label {
+  flex: 1;           /* expand to fill chip; without this, label collapses to 0 */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ss-chip-x {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--green);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+  min-height: auto; /* override the global 36px min-height on buttons */
+}
+
+/* Transparent input inside the styled wrap */
+.ss-inner-inp {
+  flex: 1;
+  min-width: 50px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  outline: none;
+  padding: 3px 0;
+  min-height: auto;
+  /* Explicitly undo any inherited uppercase/tracking from .filters label */
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.ss-inner-inp::placeholder {
+  color: var(--text-dim);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* Floating dropdown list */
+.ss-list {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 200;
+  height: 240px;     /* explicit height (not just max-height) forces iOS to create a scrollable region */
+  max-height: 240px;
+  overflow-y: scroll;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  background: var(--bg-raised);
+  border: 1px solid var(--green-border);
+  border-radius: var(--radius);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.ss-list[hidden] { display: none; }
+
+.ss-opt {
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Must explicitly reset; .filters label inherits uppercase + wide tracking */
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.ss-opt:last-child { border-bottom: none; }
+
+.ss-opt:hover,
+.ss-opt.ss-kb {
+  background: var(--bg-input);
+  color: var(--text-white);
+}
+
+.ss-opt.ss-sel {
+  color: var(--green);
+  background: var(--green-dim);
+}
+
+@media (max-width: 600px) {
+  .ss-wrap { min-height: 40px; min-width: 0; }
+  .ss-inner-inp { font-size: 16px; } /* prevent iOS zoom on focus */
+  .ss-list { height: 200px; max-height: 200px; }
+  .ss-opt  { padding: 11px 12px; } /* larger touch targets */
+}
+
+
+/* ---------- Filter Collapse Toggle (mobile only) ---------- */
+.filters-toggle { display: none; }
+
+@media (max-width: 600px) {
+  .filters-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    background: var(--bg-raised);
+    color: var(--green);
+    border: 1px solid var(--green-border);
+    padding: 10px 14px;
+    margin-bottom: 6px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    min-height: 44px;
+  }
+
+  .filters-toggle::after {
+    content: '▴'; /* collapsed state: arrow points up = "click to expand" */
+    font-size: 14px;
+    transition: transform 0.2s;
+  }
+
+  .filters-toggle.open::after {
+    content: '▾'; /* expanded state: arrow points down = "click to collapse" */
+  }
+
+  .filters.collapsed { display: none; }
+}
+
+
+/* ---------- Bottom Tab Nav (mobile) ---------- */
+@media (max-width: 600px) {
+  .tabs {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    border-top: 1px solid var(--border);
+    border-bottom: none;
+    /* override max-width centering — must span full width */
+    max-width: 100%;
+  }
+
+  /* Clearance so content isn't hidden behind the fixed tab bar (~54px tall) */
+  .panel  { padding-bottom: 80px; }
+  .footer { margin-bottom: 54px; }
+}
+
+
+/* ---------- Sticky Search Bar (mobile) ---------- */
+@media (max-width: 600px) {
+  .search-bar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: var(--bg-surface);
+    padding-top: 10px;
+    padding-bottom: 8px;
+    /* pull it flush to panel edges so background covers full width */
+    margin: -16px -12px 8px;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+}
+
+
+/* ---------- Date input: prevent iOS Safari rendering quirks ---------- */
+input[type="date"],
+input[type="datetime-local"] {
+  -webkit-appearance: none;
+}
+
+
+/* ---------- Focus outline: pointer devices only ----------
+   On touch screens :focus-visible can fire on tap, leaving a stale
+   green outline. Only show it on devices that support hover (mouse). */
+@media (hover: none) {
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  .tab:focus-visible,
+  .page-btn:focus-visible,
+  .ss-input:focus-visible {
+    outline: none;
+  }
+}
+
+
+/* ---------- WARN syslog: hide suffix on mobile ---------- */
+@media (max-width: 600px) {
+  .warn-suffix { display: none; }
+}
+
+
+/* ============================================================
+   CONTEXT VIEW
+   Slides in when a search result is clicked. Shows the
+   conversation thread around the selected message.
+   ============================================================ */
+
+/* Empty results state */
+.empty-results {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 32px 0;
+  text-align: center;
+}
+
+/* Search result cards are now clickable */
+.msg {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.msg:hover { background: var(--bg-raised); }
+
+/* Header: back button + context label */
+.ctx-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-header);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.ctx-back {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--green);
+  background: none;
+  border: 1px solid var(--green-border);
+  border-radius: var(--radius);
+  padding: 6px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.ctx-back:hover { background: var(--green-dim); }
+
+.ctx-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Thread scroll area */
+.ctx-thread {
+  display: flex;
+  flex-direction: column;
+  padding: 20px 20px 32px;
+  gap: 0;
+}
+
+/* Time-gap divider between messages far apart in time */
+.ctx-gap {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  padding: 14px 0 6px;
+}
+
+/* One message row */
+.ctx-msg {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 78%;
+  margin-bottom: 3px;
+}
+
+/* Extra top margin when sender changes — visual grouping */
+.ctx-msg.ctx-new-sender { margin-top: 14px; }
+
+.ctx-sender-name {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  padding-left: 3px;
+  margin-bottom: 3px;
+}
+
+/* The bubble itself */
+.ctx-bubble {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 3px 14px 14px 14px;
+  padding: 8px 13px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+/* Highlighted anchor bubble (the message that was searched) */
+.ctx-anchor .ctx-bubble {
+  border-color: var(--green-border);
+  background: var(--green-dim);
+  color: var(--green);
+  box-shadow: 0 0 0 3px rgba(40, 200, 100, 0.08);
+}
+
+/* Tiny timestamp shown under anchor + first-in-group messages */
+.ctx-msg-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  padding-left: 3px;
+  margin-top: 3px;
+}
+
+/* Media badge inside bubble */
+.ctx-media-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 5px;
+  margin-left: 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  vertical-align: middle;
+}
+
+/* Loading / error state */
+.ctx-loading {
+  padding: 48px 20px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 600px) {
+  .ctx-msg  { max-width: 92%; }
+  .ctx-thread { padding: 12px 14px 80px; }
+  .ctx-header { padding: 10px 14px; }
 }

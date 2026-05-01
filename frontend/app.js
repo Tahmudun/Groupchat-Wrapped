@@ -91,12 +91,14 @@ async function init() {
     if (sErr) throw sErr;
     console.log('init: ok — messages', msgCount, '· senders', senders?.length);
 
-    document.getElementById('stat-members').textContent = senders.length.toLocaleString();
+    document.getElementById('stat-messages').textContent = msgCount.toLocaleString();
+    document.getElementById('stat-members').textContent  = senders.length.toLocaleString();
 
     populateSenderDropdown('filter-sender', senders, true);
     populateSenderDropdown('inter-a',       senders, false);
     populateSenderDropdown('inter-b',       senders, false);
 
+    initFilterCollapse();
     document.getElementById('db-status').textContent = 'db: connected';
   } catch (err) {
     console.error(err);
@@ -176,6 +178,7 @@ function populateSenderDropdown(id, senders, includeAny) {
     opt.textContent = `${displayName} (${s.message_count.toLocaleString()})`;
     sel.appendChild(opt);
   }
+  buildSearchableDropdown(id);
 }
 
 // Wait for the DOM to be fully ready before initializing. This avoids the
@@ -196,6 +199,20 @@ const searchInput = document.getElementById('search-query');
 
 searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') startSearch(); });
 searchBtn.addEventListener('click', startSearch);
+
+// Delegated click: any .msg card in the results list opens the context view.
+document.getElementById('results').addEventListener('click', e => {
+  const card = e.target.closest('.msg');
+  if (card?.dataset.ts) openContext(card.dataset.ts);
+});
+
+// Disable/enable the search button and pagination during a fetch so the user
+// can't fire overlapping requests.
+function setSearchBusy(busy) {
+  searchBtn.disabled = busy;
+  searchBtn.textContent = busy ? 'Searching…' : 'Search';
+  document.querySelectorAll('#pagination .page-btn').forEach(b => { b.disabled = busy; });
+}
 
 // startSearch() is called when the user hits Search or presses Enter.
 // It reads the form, validates input, saves state, then fetches page 1.
@@ -242,12 +259,17 @@ async function startSearch() {
   };
 
   meta.textContent = 'Counting results…';
+  setSearchBusy(true);
 
-  // Step 1: get the total count so we know how many pages to show.
-  await fetchTotalCount();
+  try {
+    // Step 1: get the total count so we know how many pages to show.
+    await fetchTotalCount();
 
-  // Step 2: fetch and render page 1.
-  await fetchPage(1);
+    // Step 2: fetch and render page 1.
+    await fetchPage(1);
+  } finally {
+    setSearchBusy(false);
+  }
 }
 
 // fetchTotalCount() calls a lightweight SQL function that counts matching
@@ -274,12 +296,14 @@ async function fetchTotalCount() {
 }
 
 // fetchPage(n) fetches exactly PAGE_SIZE rows for page n, using the
-// saved searchState. Called by startSearch() and the pagination buttons.
+// saved searchState. Called by startSearch() (already inside setSearchBusy)
+// and directly by pagination buttons.
 async function fetchPage(pageNum) {
   const meta    = document.getElementById('result-meta');
   const results = document.getElementById('results');
 
   searchState.currentPage = pageNum;
+  setSearchBusy(true);
 
   // offset = rows to skip before returning results.
   const offset = (pageNum - 1) * PAGE_SIZE;
@@ -302,6 +326,7 @@ async function fetchPage(pageNum) {
   if (error) {
     console.error(error);
     meta.textContent = 'Error: ' + error.message;
+    setSearchBusy(false);
     return;
   }
 
@@ -315,10 +340,15 @@ async function fetchPage(pageNum) {
   meta.textContent =
     `Page ${pageNum} of ${totalPages} · ${searchState.totalCount.toLocaleString()} total results`;
 
-  results.innerHTML = filtered.map(r => renderMessage(r, searchState.query)).join('');
+  if (filtered.length === 0) {
+    results.innerHTML = '<p class="empty-results">No messages matched your filters.</p>';
+  } else {
+    results.innerHTML = filtered.map(r => renderMessage(r, searchState.query)).join('');
+  }
 
   // Render page nav buttons.
   renderPagination();
+  setSearchBusy(false);
 
   // Scroll the result-meta line into view — same feel as Gmail page turns.
   document.getElementById('result-meta').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -374,7 +404,7 @@ function renderPagination() {
   container.innerHTML = html;
 }
 
-// Renders a single message row.
+// Renders a single message row. Clicking opens the context view.
 function renderMessage(msg, query) {
   const content = highlight(escapeHtml(msg.content || ''), query);
   const badges  = [];
@@ -382,7 +412,7 @@ function renderMessage(msg, query) {
   if (msg.reaction_count > 0) badges.push(`<span class="badge rxn">${msg.reaction_count} ❤</span>`);
 
   return `
-    <div class="msg">
+    <div class="msg" data-ts="${escapeHtml(msg.ts)}">
       <div class="meta">
         <span class="sender">${escapeHtml(msg.sender)}</span>
         <span class="ts">${formatTs(msg.ts)}</span>
@@ -391,6 +421,93 @@ function renderMessage(msg, query) {
       <div class="badges">${badges.join('')}</div>
     </div>
   `;
+}
+
+
+// ─── CONTEXT VIEW ─────────────────────────────────────────────────────────────
+
+document.getElementById('ctx-back').addEventListener('click', closeContext);
+
+function closeContext() {
+  document.getElementById('panel-context').classList.add('hidden');
+  document.getElementById('panel-search').classList.remove('hidden');
+}
+
+async function openContext(anchorTs) {
+  const panelSearch  = document.getElementById('panel-search');
+  const panelContext = document.getElementById('panel-context');
+  const thread       = document.getElementById('ctx-thread');
+  const title        = document.getElementById('ctx-title');
+
+  panelSearch.classList.add('hidden');
+  panelContext.classList.remove('hidden');
+  thread.innerHTML = '<div class="ctx-loading">[SYS] loading context…</div>';
+  title.textContent = '';
+
+  // Fetch messages ±6 hours around the anchor timestamp
+  const anchor = new Date(anchorTs);
+  const from   = new Date(anchor.getTime() - 6 * 60 * 60 * 1000).toISOString();
+  const to     = new Date(anchor.getTime() + 6 * 60 * 60 * 1000).toISOString();
+
+  const { data, error } = await sb
+    .from('messages')
+    .select('id, sender, content, media_type, timestamp')
+    .gte('timestamp', from)
+    .lte('timestamp', to)
+    .eq('message_type', 'message')
+    .order('timestamp', { ascending: true })
+    .limit(80);
+
+  if (error) {
+    thread.innerHTML = `<div class="ctx-loading">[ERR] ${escapeHtml(error.message)}</div>`;
+    return;
+  }
+  if (!data || data.length === 0) {
+    thread.innerHTML = '<div class="ctx-loading">No messages found in this window.</div>';
+    return;
+  }
+
+  title.textContent = `${data.length} msgs · ${formatTs(anchorTs)}`;
+  thread.innerHTML = renderContextThread(data, anchor.getTime());
+
+  // Scroll the highlighted message into view
+  requestAnimationFrame(() => {
+    document.getElementById('ctx-anchor')?.scrollIntoView({ block: 'center', behavior: 'instant' });
+  });
+}
+
+function renderContextThread(messages, anchorMs) {
+  let prevSender = null;
+  let prevMs     = null;
+  const parts    = [];
+
+  for (const msg of messages) {
+    const msgMs     = new Date(msg.timestamp).getTime();
+    const isAnchor  = Math.abs(msgMs - anchorMs) < 2000;
+    const newSender = msg.sender !== prevSender;
+    const gapMs     = prevMs !== null ? msgMs - prevMs : 0;
+
+    // Time divider when >30 min gap between consecutive messages
+    if (prevMs !== null && gapMs > 30 * 60 * 1000) {
+      parts.push(`<div class="ctx-gap">${formatTs(msg.timestamp)}</div>`);
+    }
+
+    parts.push(`
+      <div class="ctx-msg${isAnchor ? ' ctx-anchor' : ''}${newSender ? ' ctx-new-sender' : ''}"${isAnchor ? ' id="ctx-anchor"' : ''}>
+        ${newSender ? `<div class="ctx-sender-name">${escapeHtml(msg.sender)}</div>` : ''}
+        <div class="ctx-bubble">
+          ${escapeHtml(msg.content) || '<em style="opacity:.5">[media only]</em>'}
+          ${msg.media_type ? `<span class="ctx-media-badge">${msg.media_type}</span>` : ''}
+        </div>
+        ${(isAnchor || newSender) ? `<div class="ctx-msg-meta">${formatTs(msg.timestamp)}</div>` : ''}
+      </div>
+    `);
+
+    prevSender = msg.sender;
+    prevMs     = msgMs;
+  }
+
+  return parts.join('');
 }
 
 
@@ -467,6 +584,256 @@ document.getElementById('tl-btn').addEventListener('click', async () => {
     </div>
   `).join('');
 });
+
+
+// ─── SEARCHABLE SENDER DROPDOWN ──────────────────────────────────────────────
+// Replaces native <select> for the three sender fields. 573 options in a
+// native select is unusable on mobile. The hidden <select> stays in the DOM
+// as the value source so all existing code that reads .value still works.
+//
+// Selected senders display as a removable chip. Backspace on an empty input
+// clears the chip. The dropdown list is max-height scrollable so it never
+// takes over the page scroll.
+
+const _ss = {};
+
+function buildSearchableDropdown(id) {
+  const sel = document.getElementById(id);
+  if (!sel) return;
+
+  document.getElementById('ss-' + id)?.remove();
+  sel.style.display = 'none';
+
+  // .ss-wrap is the styled container (border, bg, flex row)
+  const wrap = document.createElement('div');
+  wrap.className = 'ss-wrap';
+  wrap.id = 'ss-' + id;
+
+  // Chip shown when a real sender is selected
+  const chip = document.createElement('div');
+  chip.className = 'ss-chip';
+  chip.hidden = true;
+  const chipLabel = document.createElement('span');
+  chipLabel.className = 'ss-chip-label';
+  const chipX = document.createElement('button');
+  chipX.type = 'button';
+  chipX.className = 'ss-chip-x';
+  chipX.setAttribute('tabindex', '-1');
+  chipX.textContent = '×';
+  chip.appendChild(chipLabel);
+  chip.appendChild(chipX);
+
+  // Inner input — transparent, no border; sits inside the styled wrap
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.className = 'ss-inner-inp';
+  inp.autocomplete = 'off';
+  inp.setAttribute('spellcheck', 'false');
+  inp.placeholder = sel.options[0]?.textContent || 'Select…';
+
+  const list = document.createElement('ul');
+  list.className = 'ss-list';
+  list.hidden = true;
+
+  wrap.appendChild(chip);
+  wrap.appendChild(inp);
+  wrap.appendChild(list);
+  sel.insertAdjacentElement('beforebegin', wrap);
+  _ss[id] = { wrap, chip, chipLabel, inp, list, sel };
+  _ssRebuild(id);
+
+  // Clicking the wrap (outside the chip) focuses the input
+  wrap.addEventListener('mousedown', e => {
+    if (!chip.contains(e.target)) { e.preventDefault(); inp.focus(); }
+  });
+
+  chipX.addEventListener('mousedown', e => e.preventDefault());
+  chipX.addEventListener('click',    () => _ssClear(id));
+  chipX.addEventListener('touchend', e => { e.preventDefault(); _ssClear(id); }, { passive: false });
+
+  inp.addEventListener('focus', () => _ssOpen(id));
+  inp.addEventListener('input', () => {
+    if (!_ss[id].chip.hidden) _ssClearChipOnly(id); // typing replaces selection
+    list.hidden = false;
+    _ssFilter(id, inp.value);
+  });
+  inp.addEventListener('keydown', e => _ssKey(id, e));
+
+  // Distinguish scroll from tap inside the list
+  let _touchY = 0, _touchScrolled = false;
+  list.addEventListener('touchstart', e => { _touchY = e.touches[0].clientY; _touchScrolled = false; }, { passive: true });
+  list.addEventListener('touchmove',  e => { if (Math.abs(e.touches[0].clientY - _touchY) > 8) _touchScrolled = true; }, { passive: true });
+  list.addEventListener('touchend', e => {
+    if (_touchScrolled) return;
+    const li = e.target.closest('.ss-opt');
+    if (li) { e.preventDefault(); _ssPick(id, li.dataset.value); }
+  }, { passive: false });
+  list.addEventListener('mousedown', e => {
+    e.stopPropagation(); // prevent wrap's mousedown from firing inp.focus() → _ssOpen()
+    const li = e.target.closest('.ss-opt');
+    if (li) { e.preventDefault(); _ssPick(id, li.dataset.value); }
+  });
+}
+
+// Close open dropdowns on outside interaction
+['mousedown', 'touchstart'].forEach(evt =>
+  document.addEventListener(evt, e => {
+    Object.entries(_ss).forEach(([id, d]) => {
+      if (!d.list.hidden && !d.wrap.contains(e.target)) _ssClose(id);
+    });
+  }, { passive: true })
+);
+
+function _ssRebuild(id) {
+  const { list, sel } = _ss[id];
+  list.innerHTML = '';
+  Array.from(sel.options).forEach(opt => {
+    const li = document.createElement('li');
+    li.className = 'ss-opt';
+    li.dataset.value = opt.value;
+    li.textContent = opt.textContent;
+    list.appendChild(li);
+  });
+}
+
+function _ssOpen(id) {
+  const { inp, list } = _ss[id];
+  inp.value = '';
+  list.querySelectorAll('.ss-opt').forEach(li => { li.hidden = false; li.classList.remove('ss-kb'); });
+  list.hidden = false;
+  list.querySelector('.ss-sel')?.scrollIntoView({ block: 'nearest' });
+}
+
+function _ssClose(id) {
+  if (_ss[id].list.hidden) return;
+  _ss[id].list.hidden = true;
+  _ss[id].inp.value = '';
+}
+
+function _ssClearChipOnly(id) {
+  const { chip, inp, list, sel } = _ss[id];
+  chip.hidden = true;
+  inp.hidden = false;
+  sel.value = '';
+  inp.placeholder = sel.options[0]?.textContent || 'Select…';
+  inp.value = '';
+  list.querySelectorAll('.ss-opt').forEach(li => li.classList.remove('ss-sel'));
+}
+
+function _ssClear(id) {
+  _ssClearChipOnly(id);
+  _ss[id].inp.focus();
+  _ssOpen(id);
+}
+
+function _ssFilter(id, q) {
+  const lq = q.toLowerCase();
+  _ss[id].list.querySelectorAll('.ss-opt').forEach(li => {
+    li.hidden = lq.length > 0 && !li.textContent.toLowerCase().includes(lq);
+    li.classList.remove('ss-kb');
+  });
+}
+
+function _ssPick(id, value) {
+  const { chip, chipLabel, inp, list, sel } = _ss[id];
+  sel.value = value;
+  list.querySelectorAll('.ss-opt').forEach(li => {
+    li.hidden = false;
+    li.classList.remove('ss-kb');
+    li.classList.toggle('ss-sel', li.dataset.value === value);
+  });
+  list.hidden = true;
+  inp.value = '';
+
+  if (!value) {
+    // "Anyone" / empty option — no chip
+    chip.hidden = true;
+    inp.hidden = false;
+    inp.placeholder = sel.options[0]?.textContent || 'Select…';
+  } else {
+    const opt = Array.from(sel.options).find(o => o.value === value);
+    chipLabel.textContent = opt?.textContent || value;
+    chip.hidden = false;
+    inp.hidden = true; // hide input so chip fills the wrap (flex: 1 needs a defined container width)
+    inp.blur();
+  }
+}
+
+function _ssKey(id, e) {
+  const { chip, inp, list } = _ss[id];
+  // Backspace on empty input with active chip → clear selection
+  if (e.key === 'Backspace' && inp.value === '' && !chip.hidden) {
+    _ssClear(id);
+    return;
+  }
+  if (e.key === 'Escape') { _ssClose(id); inp.blur(); return; }
+  if (e.key === 'Tab')    { _ssClose(id); return; }
+  if (list.hidden) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); _ssOpen(id); }
+    return;
+  }
+  const vis = [...list.querySelectorAll('.ss-opt:not([hidden])')];
+  if (!vis.length) return;
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const kb = list.querySelector('.ss-kb');
+    if (kb) _ssPick(id, kb.dataset.value);
+    return;
+  }
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  e.preventDefault();
+  const cur = list.querySelector('.ss-kb');
+  const idx = cur ? vis.indexOf(cur) : -1;
+  const next = e.key === 'ArrowDown'
+    ? vis[(idx + 1) % vis.length]
+    : vis[(idx - 1 + vis.length) % vis.length];
+  cur?.classList.remove('ss-kb');
+  next.classList.add('ss-kb');
+  next.scrollIntoView({ block: 'nearest' });
+}
+
+
+// ─── FILTER COLLAPSE (MOBILE) ─────────────────────────────────────────────────
+function initFilterCollapse() {
+  if (document.getElementById('filters-toggle')) return;
+  const filtersEl = document.querySelector('#panel-search .filters');
+  if (!filtersEl) return;
+
+  const toggle = document.createElement('button');
+  toggle.className = 'filters-toggle';
+  toggle.id = 'filters-toggle';
+  filtersEl.insertAdjacentElement('beforebegin', toggle);
+
+  function countActive() {
+    let n = 0;
+    if (document.getElementById('filter-sender')?.value)                    n++;
+    if (document.getElementById('filter-media')?.value)                     n++;
+    if (document.getElementById('filter-start')?.value)                     n++;
+    if (document.getElementById('filter-end')?.value)                       n++;
+    const rxn  = document.getElementById('filter-min-reactions')?.value;
+    const sort = document.getElementById('filter-sort')?.value;
+    if (rxn  && rxn  !== '0')      n++;
+    if (sort && sort !== 'newest') n++;
+    return n;
+  }
+
+  let isOpen = true;
+
+  function applyState() {
+    const n = countActive();
+    toggle.textContent = `FILTERS${n > 0 ? ` (${n} ACTIVE)` : ''}`;
+    toggle.classList.toggle('open', isOpen);
+    filtersEl.style.display = isOpen ? '' : 'none';
+  }
+
+  toggle.addEventListener('click', () => {
+    isOpen = !isOpen;
+    applyState();
+  });
+  filtersEl.addEventListener('change', applyState);
+
+  applyState(); // start expanded
+}
 
 
 // ─── UTILITIES ────────────────────────────────────────────────────────────────

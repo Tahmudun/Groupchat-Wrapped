@@ -9,7 +9,11 @@
 -- Apply by pasting into Supabase Dashboard → SQL Editor → Run.
 --
 -- Last rebuilt from live database introspection: 2026-04-27
--- Last updated: 2026-04-27 (synced members_status_check constraint with
+-- Last updated: 2026-04-27 (added include_inactive parameter to four RPCs:
+--   search_messages, count_messages, get_distinct_senders,
+--   get_members_with_counts. Defaults to FALSE — members with status='removed'
+--   are now hidden from default results. Pass TRUE to override.)
+-- Previous update: 2026-04-27 (synced members_status_check constraint with
 --   live database — actual values are 'recognized', 'unrecognized',
 --   'deleted', 'removed'; backfilled 749 members with zero real messages
 --   to status='removed')
@@ -102,9 +106,9 @@ CREATE INDEX IF NOT EXISTS idx_reactions_emoji   ON reactions (emoji);
 --   'recognized'   — identity confirmed (curated via Members tab).
 --   'removed'      — person who appears in members but has zero real messages
 --                    (only system_* event activity, or no activity at all).
---                    Backfilled 2026-04-27. Hidden from sender dropdown and
---                    default search results; pass include_inactive=true to RPCs
---                    to override.
+--                    Backfilled 2026-04-27. Hidden from sender dropdown,
+--                    Members tab, search results, and counts by default;
+--                    pass include_inactive=true to RPCs to override.
 --   'deleted'      — soft-delete for admin removal of a member row.
 -- Constraint is intentionally a CHECK rather than an ENUM to make it easy
 -- to add new categories without a type migration.
@@ -131,6 +135,15 @@ CREATE INDEX IF NOT EXISTS idx_members_aliases ON members USING GIN (aliases);
 -- ============================================================================
 -- SECTION 2: FUNCTIONS (RPCs callable from frontend)
 -- ============================================================================
+--
+-- include_inactive convention (added 2026-04-27):
+--   Four RPCs accept include_inactive BOOLEAN DEFAULT FALSE as their last
+--   parameter: search_messages, count_messages, get_distinct_senders,
+--   get_members_with_counts. When FALSE (the default), members with
+--   status='removed' are filtered out. When TRUE, all members are included.
+--   The check uses IS DISTINCT FROM 'removed' (not equality) so senders
+--   without a members row — NULL status — are not accidentally excluded.
+-- ============================================================================
 
 -- ----------------------------------------------------------------------------
 -- FUNCTION: search_messages
@@ -150,6 +163,8 @@ CREATE INDEX IF NOT EXISTS idx_members_aliases ON members USING GIN (aliases);
 --     AND sort != 'most_reactions') — Postgres can prune it.
 --   - Always filters message_type = 'message' to exclude system events
 --     (joins/leaves/adds) from results.
+--   - LEFT JOIN to members (added 2026-04-27) for the status='removed' filter.
+--     LEFT (not INNER) so senders without a members row still appear.
 --
 -- Performance history:
 --   - V1: LEFT JOIN reactions + GROUP BY 6 cols + HAVING. Aggregated whole
@@ -163,17 +178,21 @@ CREATE INDEX IF NOT EXISTS idx_members_aliases ON members USING GIN (aliases);
 DROP FUNCTION IF EXISTS search_messages(
   text, text, text, timestamptz, timestamptz, integer, text, integer, integer
 );
+DROP FUNCTION IF EXISTS search_messages(
+  text, text, text, timestamptz, timestamptz, integer, text, integer, integer, boolean
+);
 
 CREATE OR REPLACE FUNCTION search_messages(
-    query_text    TEXT        DEFAULT NULL,
-    filter_sender TEXT        DEFAULT NULL,
-    filter_media  TEXT        DEFAULT NULL,
-    start_date    TIMESTAMPTZ DEFAULT NULL,
-    end_date      TIMESTAMPTZ DEFAULT NULL,
-    min_reactions INT         DEFAULT 0,
-    sort_order    TEXT        DEFAULT 'newest',
-    result_limit  INT         DEFAULT 50,
-    result_offset INT         DEFAULT 0
+    query_text       TEXT        DEFAULT NULL,
+    filter_sender    TEXT        DEFAULT NULL,
+    filter_media     TEXT        DEFAULT NULL,
+    start_date       TIMESTAMPTZ DEFAULT NULL,
+    end_date         TIMESTAMPTZ DEFAULT NULL,
+    min_reactions    INT         DEFAULT 0,
+    sort_order       TEXT        DEFAULT 'newest',
+    result_limit     INT         DEFAULT 50,
+    result_offset    INT         DEFAULT 0,
+    include_inactive BOOLEAN     DEFAULT FALSE
 )
 RETURNS TABLE (
     id             TEXT,
@@ -227,8 +246,10 @@ BEGIN
     END AS rank
   FROM messages m
   LEFT JOIN reaction_counts rc ON rc.message_id = m.id
+  LEFT JOIN members mem        ON mem.username  = m.sender
   WHERE
     m.message_type = 'message'
+    AND (include_inactive OR mem.status IS DISTINCT FROM 'removed')
     AND (tsq IS NULL OR m.search_vector @@ tsq)
     AND (filter_sender IS NULL OR m.sender     = filter_sender)
     AND (filter_media  IS NULL OR m.media_type = filter_media)
@@ -259,20 +280,30 @@ $$;
 -- reactions join when min_reactions = 0 — that join was previously causing
 -- timeouts on keyword-only searches.
 -- ----------------------------------------------------------------------------
+DROP FUNCTION IF EXISTS count_messages(
+  text, text, text, timestamptz, timestamptz, integer
+);
+DROP FUNCTION IF EXISTS count_messages(
+  text, text, text, timestamptz, timestamptz, integer, boolean
+);
+
 CREATE OR REPLACE FUNCTION count_messages(
-    query_text    TEXT    DEFAULT NULL,
-    filter_sender TEXT    DEFAULT NULL,
-    filter_media  TEXT    DEFAULT NULL,
-    start_date    TIMESTAMPTZ DEFAULT NULL,
-    end_date      TIMESTAMPTZ DEFAULT NULL,
-    min_reactions INT     DEFAULT 0
+    query_text       TEXT        DEFAULT NULL,
+    filter_sender    TEXT        DEFAULT NULL,
+    filter_media     TEXT        DEFAULT NULL,
+    start_date       TIMESTAMPTZ DEFAULT NULL,
+    end_date         TIMESTAMPTZ DEFAULT NULL,
+    min_reactions    INT         DEFAULT 0,
+    include_inactive BOOLEAN     DEFAULT FALSE
 )
 RETURNS BIGINT
 LANGUAGE SQL STABLE AS $$
   SELECT COUNT(*)::BIGINT
   FROM messages m
+  LEFT JOIN members mem ON mem.username = m.sender
   WHERE
     m.message_type = 'message'
+    AND (include_inactive OR mem.status IS DISTINCT FROM 'removed')
     AND (query_text IS NULL OR query_text = '' OR m.search_vector @@ websearch_to_tsquery('english', query_text))
     AND (filter_sender IS NULL OR m.sender = filter_sender)
     AND (filter_media IS NULL OR m.media_type = filter_media)
@@ -294,8 +325,19 @@ $$;
 --
 -- Returns JSONB (not a table) to sidestep PostgREST's default 1,000-row cap
 -- that was truncating our sender list to 11 senders early in the project.
+--
+-- Note on include_inactive: in current data this filter is a no-op for the
+-- dropdown — every 'removed' member has zero real messages by definition,
+-- and the inner WHERE message_type='message' already excludes them. The
+-- filter is defensive coding for the future case where someone with real
+-- messages gets manually marked 'removed' via the admin page.
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION get_distinct_senders()
+DROP FUNCTION IF EXISTS get_distinct_senders();
+DROP FUNCTION IF EXISTS get_distinct_senders(BOOLEAN);
+
+CREATE OR REPLACE FUNCTION get_distinct_senders(
+    include_inactive BOOLEAN DEFAULT FALSE
+)
 RETURNS JSONB
 LANGUAGE SQL STABLE AS $$
   SELECT COALESCE(
@@ -316,7 +358,9 @@ LANGUAGE SQL STABLE AS $$
     WHERE message_type = 'message'
     GROUP BY sender
   ) m
-  LEFT JOIN members mem ON mem.username = m.sender;
+  LEFT JOIN members mem ON mem.username = m.sender
+  WHERE include_inactive
+     OR mem.status IS DISTINCT FROM 'removed';
 $$;
 
 
@@ -326,8 +370,18 @@ $$;
 -- Powers the Members tab. Returns every row from the members table plus
 -- a live message count joined from messages. LEFT JOIN ensures members
 -- with zero messages (pure reactors we added manually) still appear.
+--
+-- This RPC is where include_inactive does the most user-visible work:
+-- by default, returns 573 members (active senders); with include_inactive=TRUE
+-- returns all 1322 (the noise-heavy full member list including drive-by
+-- leavers and add/remove targets).
 -- ----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION get_members_with_counts()
+DROP FUNCTION IF EXISTS get_members_with_counts();
+DROP FUNCTION IF EXISTS get_members_with_counts(BOOLEAN);
+
+CREATE OR REPLACE FUNCTION get_members_with_counts(
+    include_inactive BOOLEAN DEFAULT FALSE
+)
 RETURNS TABLE (
     username       TEXT,
     alias          TEXT,
@@ -344,6 +398,7 @@ LANGUAGE SQL STABLE SECURITY DEFINER AS $$
     COUNT(msg.id) AS message_count
   FROM members m
   LEFT JOIN messages msg ON msg.sender = m.username
+  WHERE include_inactive OR m.status <> 'removed'
   GROUP BY m.username, m.alias, m.status, m.notes
   ORDER BY message_count DESC;
 $$;
@@ -476,15 +531,29 @@ CREATE POLICY "anon can update members"  ON members   FOR UPDATE USING (true);
 -- SECTION 4: FUNCTION GRANTS
 -- ============================================================================
 -- Allow anon + authenticated roles to call each RPC from the frontend.
+-- Typed signatures used because adding overloads (or running this file twice
+-- after a function shape change) creates ambiguity that Postgres can't
+-- resolve from the bare name.
 -- ============================================================================
 
-GRANT EXECUTE ON FUNCTION search_messages         TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION count_messages          TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION get_distinct_senders    TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION get_members_with_counts TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION update_member           TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION find_interactions       TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION activity_around         TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION search_messages(
+    TEXT, TEXT, TEXT, TIMESTAMPTZ, TIMESTAMPTZ, INT, TEXT, INT, INT, BOOLEAN
+)                                                            TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION count_messages(
+    TEXT, TEXT, TEXT, TIMESTAMPTZ, TIMESTAMPTZ, INT, BOOLEAN
+)                                                            TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION get_distinct_senders(BOOLEAN)      TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION get_members_with_counts(BOOLEAN)   TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION update_member(
+    TEXT, TEXT, TEXT, TEXT
+)                                                            TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION find_interactions(
+    TEXT, TEXT, INT, INT
+)                                                            TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION activity_around(
+    TIMESTAMPTZ, INT
+)                                                            TO anon, authenticated;
+
 
 -- ============================================================================
 -- SECTION 5: MAINTENANCE NOTES

@@ -40,9 +40,7 @@
     </div>
     <div class="log-line">
       <span class="tag-warn">[WARN]</span>
-      <span class="val-red">17,822</span> msgs attributed to deleted accounts
-      <span class="sep">·</span>
-      flagged for review
+      <span class="val-red">17,822</span> msgs attributed to deleted accounts<span class="warn-suffix"> · flagged for review</span>
     </div>
   </div>
 
@@ -184,6 +182,15 @@
     </div>
     <div class="result-meta" id="tl-meta"></div>
     <div class="results" id="tl-results"></div>
+  </section>
+
+  <!-- ================ CONTEXT VIEW ================ -->
+  <section class="panel hidden" id="panel-context">
+    <div class="ctx-header">
+      <button class="ctx-back" id="ctx-back">← Back</button>
+      <span class="ctx-title" id="ctx-title"></span>
+    </div>
+    <div class="ctx-thread" id="ctx-thread"></div>
   </section>
 
   <!-- ===== FOOTER ===== -->

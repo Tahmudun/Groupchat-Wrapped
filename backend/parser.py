@@ -305,6 +305,7 @@ def parse_groupchat(folder_path):
 
 if __name__ == "__main__":
     import sys
+    import json as _json
     from collections import Counter
 
     folder = sys.argv[1] if len(sys.argv) > 1 else "."
@@ -316,7 +317,18 @@ if __name__ == "__main__":
     for t, c in type_counter.most_common():
         print(f"  {t:25s}  {c:>7d}  ({100*c/len(messages):.1f}%)")
 
+    # Show first 30 mappings inline for quick eyeball
     print(f"\n=== CONFIDENT NAME -> HANDLE MAPPINGS (first 30) ===")
     for i, (name, handle) in enumerate(list(name_to_handle.items())[:30]):
         print(f"  {name!r:40s} -> {handle!r}")
     print(f"\nTotal confident mappings: {len(name_to_handle)}")
+
+    # Dump full mapping to a JSON file for the bio_name backfill SQL.
+    # Skip self-mappings (where bio_name would equal the handle — pointless).
+    real_mappings = {name: handle for name, handle in name_to_handle.items()
+                     if name != handle}
+    out_path = "name_handle_mappings.json"
+    with open(out_path, "w") as f:
+        _json.dump(real_mappings, f, indent=2, ensure_ascii=False)
+    print(f"\nFull mappings ({len(real_mappings)} after filtering self-maps) "
+          f"written to: {out_path}")
