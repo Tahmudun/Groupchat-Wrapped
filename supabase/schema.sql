@@ -79,8 +79,9 @@ CREATE TABLE IF NOT EXISTS reactions (
     PRIMARY KEY (message_id, reactor, emoji)
 );
 
-CREATE INDEX IF NOT EXISTS idx_reactions_reactor ON reactions (reactor);
-CREATE INDEX IF NOT EXISTS idx_reactions_emoji   ON reactions (emoji);
+CREATE INDEX IF NOT EXISTS idx_reactions_reactor    ON reactions (reactor);
+CREATE INDEX IF NOT EXISTS idx_reactions_emoji      ON reactions (emoji);
+CREATE INDEX IF NOT EXISTS idx_reactions_message_id ON reactions (message_id);
 
 
 -- ----------------------------------------------------------------------------
@@ -177,25 +178,34 @@ CREATE TABLE IF NOT EXISTS site_stats (
 -- Anything else falls back to 'newest' via whitelist (prevents SQL injection
 -- since the value is never interpolated, only compared against fixed strings).
 --
--- Performance design:
---   - Uses a CTE (reaction_counts) that aggregates the reactions table ONCE,
---     not per-message. The HAVING clause pre-filters to only messages meeting
---     min_reactions, which keeps the join's right side small.
---   - The CTE is essentially free when reactions aren't needed (min_reactions=0
---     AND sort != 'most_reactions') — Postgres can prune it.
---   - Always filters message_type = 'message' to exclude system events
---     (joins/leaves/adds) from results.
---   - LEFT JOIN to members (added 2026-04-27) for the status='removed' filter.
---     LEFT (not INNER) so senders without a members row still appear.
+-- Performance design — two paths based on whether reactions are needed:
+--
+--   Fast path (needs_reactions = FALSE):
+--     GIN index handles keyword search. Reaction count for the 50 returned
+--     rows is computed via a correlated subquery (50 PK lookups on reactions,
+--     not a full 401k-row aggregate).
+--
+--   Reactions path (needs_reactions = TRUE):
+--     Aggregates reactions first (small result after HAVING), pre-sorts by cnt
+--     DESC, and limits before joining to messages. This forces a Nested Loop +
+--     PK index scan on messages instead of a sequential scan of all 443k rows.
+--     inner_limit over-fetches by 4x to survive filtered rows (removed members,
+--     system message rows).
 --
 -- Performance history:
---   - V1: LEFT JOIN reactions + GROUP BY 6 cols + HAVING. Aggregated whole
---     reactions table on every call. Timed out on broad searches.
+--   - V1: LEFT JOIN reactions + GROUP BY. Full table aggregate on every call.
+--     Timed out on broad searches.
 --   - V2: Correlated subqueries gated by min_reactions/sort. Fixed broad
 --     searches but timed out on min_reactions > 0 with no other filters
 --     because the subquery ran per-row across hundreds of thousands of rows.
---   - V3 (current): CTE with HAVING pre-filter. Aggregation happens once on
---     the reactions table itself, then joined to messages.
+--   - V3: CTE with HAVING pre-filter. Aggregation once, then joined to messages.
+--     Introduced seqscan on messages when reactions needed (planner chose
+--     wrong join order due to bad CTE row estimates).
+--   - V4 (current): Two-path split. Fast path avoids full aggregate entirely.
+--     Reactions path uses pre-sorted inner LIMIT to force PK lookups.
+--     Added idx_reactions_message_id (2026-05-02) which made the reactions
+--     aggregate 20x faster (GroupAggregate via Index Only Scan vs HashAggregate
+--     with disk spill).
 -- ----------------------------------------------------------------------------
 DROP FUNCTION IF EXISTS search_messages(
   text, text, text, timestamptz, timestamptz, integer, text, integer, integer
@@ -230,66 +240,99 @@ DECLARE
   tsq tsquery;
   safe_sort TEXT;
   needs_reactions BOOLEAN;
+  inner_limit INT;
 BEGIN
   IF query_text IS NOT NULL AND trim(query_text) <> '' THEN
     tsq := plainto_tsquery('english', query_text);
   END IF;
 
   safe_sort := CASE
-    WHEN sort_order IN ('newest', 'oldest', 'relevance', 'most_reactions')
-      THEN sort_order
+    WHEN sort_order IN ('newest', 'oldest', 'relevance', 'most_reactions') THEN sort_order
     ELSE 'newest'
   END;
 
-  -- Need reaction counts only when filtering by them or sorting by them.
   needs_reactions := (min_reactions > 0) OR (safe_sort = 'most_reactions');
 
-  RETURN QUERY
-  WITH reaction_counts AS (
-    -- Aggregate reactions ONCE. The HAVING clause shrinks this to only
-    -- messages meeting min_reactions, which is typically a small fraction
-    -- of total messages. When needs_reactions is false, HAVING is a no-op.
-    SELECT message_id, COUNT(*)::BIGINT AS cnt
-    FROM reactions
-    GROUP BY message_id
-    HAVING (NOT needs_reactions) OR COUNT(*) >= min_reactions
-  )
-  SELECT
-    m.id,
-    m.sender,
-    m.timestamp AS ts,
-    m.content,
-    m.media_type,
-    COALESCE(rc.cnt, 0) AS reaction_count,
-    CASE
-      WHEN tsq IS NOT NULL AND safe_sort = 'relevance'
+  IF NOT needs_reactions THEN
+    -- Fast path: GIN index handles keyword; reaction count computed as a
+    -- correlated subquery over only the 50 returned rows (not all 401k).
+    RETURN QUERY
+    SELECT
+      m.id,
+      m.sender,
+      m.timestamp AS ts,
+      m.content,
+      m.media_type,
+      (SELECT COUNT(*)::BIGINT FROM reactions WHERE message_id = m.id) AS reaction_count,
+      CASE WHEN tsq IS NOT NULL AND safe_sort = 'relevance'
+        THEN ts_rank(m.search_vector, tsq) ELSE 0.0::REAL
+      END AS rank
+    FROM messages m
+    LEFT JOIN members mem ON mem.username = m.sender
+    WHERE
+      m.message_type = 'message'
+      AND (include_inactive OR mem.status IS DISTINCT FROM 'removed')
+      AND (tsq IS NULL OR m.search_vector @@ tsq)
+      AND (filter_sender IS NULL OR m.sender     = filter_sender)
+      AND (filter_media  IS NULL OR m.media_type = filter_media)
+      AND (start_date    IS NULL OR m.timestamp >= start_date)
+      AND (end_date      IS NULL OR m.timestamp <= end_date)
+    ORDER BY
+      CASE WHEN safe_sort = 'relevance' AND tsq IS NOT NULL
         THEN ts_rank(m.search_vector, tsq)
-      ELSE 0.0::REAL
-    END AS rank
-  FROM messages m
-  LEFT JOIN reaction_counts rc ON rc.message_id = m.id
-  LEFT JOIN members mem        ON mem.username  = m.sender
-  WHERE
-    m.message_type = 'message'
-    AND (include_inactive OR mem.status IS DISTINCT FROM 'removed')
-    AND (tsq IS NULL OR m.search_vector @@ tsq)
-    AND (filter_sender IS NULL OR m.sender     = filter_sender)
-    AND (filter_media  IS NULL OR m.media_type = filter_media)
-    AND (start_date    IS NULL OR m.timestamp >= start_date)
-    AND (end_date      IS NULL OR m.timestamp <= end_date)
-    -- When min_reactions > 0, the CTE is already filtered. Requiring
-    -- rc.message_id IS NOT NULL turns this LEFT JOIN into an effective
-    -- INNER JOIN, eliminating messages without enough reactions.
-    AND (min_reactions = 0 OR rc.message_id IS NOT NULL)
-  ORDER BY
-    CASE WHEN safe_sort = 'relevance' AND tsq IS NOT NULL
-      THEN ts_rank(m.search_vector, tsq)
-    END DESC NULLS LAST,
-    CASE WHEN safe_sort = 'most_reactions' THEN COALESCE(rc.cnt, 0) END DESC NULLS LAST,
-    CASE WHEN safe_sort = 'oldest' THEN m.timestamp END ASC,
-    CASE WHEN safe_sort IN ('newest', 'relevance', 'most_reactions') THEN m.timestamp END DESC
-  LIMIT  result_limit
-  OFFSET result_offset;
+      END DESC NULLS LAST,
+      CASE WHEN safe_sort = 'oldest' THEN m.timestamp END ASC,
+      CASE WHEN safe_sort IN ('newest', 'relevance') THEN m.timestamp END DESC
+    LIMIT  result_limit
+    OFFSET result_offset;
+
+  ELSE
+    -- Reactions path: aggregate reactions first (idx_reactions_message_id makes
+    -- this fast), pre-sort by cnt DESC and limit before joining to messages.
+    -- The inner LIMIT forces a Nested Loop + PK index scan on messages instead
+    -- of a seqscan. Over-fetch 4x to survive filtered rows.
+    inner_limit := (result_offset + result_limit) * 4 + 50;
+
+    RETURN QUERY
+    SELECT
+      m.id,
+      m.sender,
+      m.timestamp AS ts,
+      m.content,
+      m.media_type,
+      rc.cnt AS reaction_count,
+      CASE WHEN tsq IS NOT NULL AND safe_sort = 'relevance'
+        THEN ts_rank(m.search_vector, tsq) ELSE 0.0::REAL
+      END AS rank
+    FROM (
+      SELECT message_id, COUNT(*)::BIGINT AS cnt
+      FROM reactions
+      GROUP BY message_id
+      HAVING COUNT(*) >= GREATEST(min_reactions, 1)
+      ORDER BY cnt DESC
+      LIMIT inner_limit
+    ) rc
+    JOIN messages m ON m.id = rc.message_id
+    LEFT JOIN members mem ON mem.username = m.sender
+    WHERE
+      m.message_type = 'message'
+      AND (include_inactive OR mem.status IS DISTINCT FROM 'removed')
+      AND (tsq IS NULL OR m.search_vector @@ tsq)
+      AND (filter_sender IS NULL OR m.sender     = filter_sender)
+      AND (filter_media  IS NULL OR m.media_type = filter_media)
+      AND (start_date    IS NULL OR m.timestamp >= start_date)
+      AND (end_date      IS NULL OR m.timestamp <= end_date)
+    ORDER BY
+      CASE WHEN safe_sort = 'relevance' AND tsq IS NOT NULL
+        THEN ts_rank(m.search_vector, tsq)
+      END DESC NULLS LAST,
+      CASE WHEN safe_sort = 'most_reactions' THEN rc.cnt END DESC NULLS LAST,
+      CASE WHEN safe_sort = 'oldest' THEN m.timestamp END ASC,
+      CASE WHEN safe_sort IN ('newest', 'relevance', 'most_reactions') THEN m.timestamp END DESC
+    LIMIT  result_limit
+    OFFSET result_offset;
+
+  END IF;
 END;
 $$;
 
