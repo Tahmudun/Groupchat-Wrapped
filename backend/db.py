@@ -70,8 +70,15 @@ def get_connection():
         raise RuntimeError(
             "SUPABASE_DB_URL not set. Copy .env.example to .env and fill it in."
         )
-    # psycopg2.connect accepts the full postgres:// URL directly.
-    return psycopg2.connect(db_url)
+    # TCP keepalives prevent Supabase/PgBouncer from dropping long-running
+    # connections mid-batch. Without these, a 10-minute insert times out.
+    return psycopg2.connect(
+        db_url,
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=5,
+    )
 
 
 # ----------------------------------------------------------------------------
@@ -139,55 +146,46 @@ def insert_messages(parsed_messages):
     log.info(f"Prepared {len(message_rows):,} messages and "
              f"{len(reaction_rows):,} reactions for insert.")
 
-    # Open ONE connection for the whole job. Opening/closing 50 times
-    # would waste seconds of network handshake per file.
+    # Three separate connections so each one is short-lived. Supabase/PgBouncer
+    # drops connections after ~10 minutes of activity; splitting here keeps
+    # each leg well under that limit.
+
+    # ----- messages -----
+    msg_insert_sql = """
+        INSERT INTO messages (id, sender, timestamp_ms, timestamp, content, media_type, message_type)
+        VALUES %s
+        ON CONFLICT (id) DO NOTHING
+        RETURNING id
+    """
+    inserted_msg_ids = []
     with get_connection() as conn:
         with conn.cursor() as cur:
-            # ----- messages -----
-            # ON CONFLICT (id) DO NOTHING is the magic for dedup. If the
-            # MD5 id already exists in the table, this row is silently
-            # skipped. The RETURNING id clause gives us back the ids of
-            # rows that WERE inserted, so we can count them accurately.
-            msg_insert_sql = """
-                INSERT INTO messages (id, sender, timestamp_ms, timestamp, content, media_type, message_type)
-                VALUES %s
-                ON CONFLICT (id) DO NOTHING
-                RETURNING id
-            """
-            inserted_msg_ids = []
-            # Chunk the inserts so one bad row doesn't blow up 1M rows at once.
             for i in range(0, len(message_rows), BATCH_SIZE):
                 chunk = message_rows[i:i + BATCH_SIZE]
-                # execute_values expands `%s` into (%s,%s,%s,%s,%s,%s), (%s,...), ...
-                # It's the fastest safe way to do bulk inserts in psycopg2.
-                result = execute_values(
-                    cur, msg_insert_sql, chunk, fetch=True
-                )
+                result = execute_values(cur, msg_insert_sql, chunk, fetch=True)
                 inserted_msg_ids.extend(row[0] for row in result)
                 log.info(f"  messages: {i + len(chunk):,}/{len(message_rows):,} processed")
 
-            # ----- reactions -----
-            # Same pattern. Reactions have a composite primary key
-            # (message_id, reactor, emoji), so the ON CONFLICT clause
-            # targets all three columns together.
-            rxn_insert_sql = """
-                INSERT INTO reactions (message_id, reactor, emoji)
-                VALUES %s
-                ON CONFLICT (message_id, reactor, emoji) DO NOTHING
-                RETURNING message_id
-            """
-            inserted_rxn_count = 0
+    # ----- reactions -----
+    rxn_insert_sql = """
+        INSERT INTO reactions (message_id, reactor, emoji)
+        VALUES %s
+        ON CONFLICT (message_id, reactor, emoji) DO NOTHING
+        RETURNING message_id
+    """
+    inserted_rxn_count = 0
+    with get_connection() as conn:
+        with conn.cursor() as cur:
             for i in range(0, len(reaction_rows), BATCH_SIZE):
                 chunk = reaction_rows[i:i + BATCH_SIZE]
-                result = execute_values(
-                    cur, rxn_insert_sql, chunk, fetch=True
-                )
+                result = execute_values(cur, rxn_insert_sql, chunk, fetch=True)
                 inserted_rxn_count += len(result)
                 log.info(f"  reactions: {i + len(chunk):,}/{len(reaction_rows):,} processed")
 
-            # ----- site_stats -----
-            # Recompute the singleton row from scratch so it always reflects
-            # the full DB state, not just what we inserted this run.
+    # ----- site_stats -----
+    # Recompute from scratch so the row always reflects full DB state.
+    with get_connection() as conn:
+        with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO site_stats (
                     singleton_id, total_messages, total_reactions, member_count,
@@ -210,10 +208,7 @@ def insert_messages(parsed_messages):
                     date_range_end   = EXCLUDED.date_range_end,
                     last_ingested_at = EXCLUDED.last_ingested_at
             """)
-            log.info("site_stats updated.")
-
-        # Exiting the `with conn` block commits the transaction automatically
-        # (or rolls back if an exception was raised).
+        log.info("site_stats updated.")
 
     summary = {
         "messages_seen":      len(message_rows),
