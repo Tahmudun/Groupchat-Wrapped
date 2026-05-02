@@ -185,6 +185,33 @@ def insert_messages(parsed_messages):
                 inserted_rxn_count += len(result)
                 log.info(f"  reactions: {i + len(chunk):,}/{len(reaction_rows):,} processed")
 
+            # ----- site_stats -----
+            # Recompute the singleton row from scratch so it always reflects
+            # the full DB state, not just what we inserted this run.
+            cur.execute("""
+                INSERT INTO site_stats (
+                    singleton_id, total_messages, total_reactions, member_count,
+                    date_range_start, date_range_end, last_ingested_at
+                )
+                SELECT
+                    TRUE,
+                    COUNT(*) FILTER (WHERE message_type = 'message'),
+                    (SELECT COUNT(*) FROM reactions),
+                    COUNT(DISTINCT sender) FILTER (WHERE message_type = 'message'),
+                    MIN(timestamp) FILTER (WHERE message_type = 'message'),
+                    MAX(timestamp) FILTER (WHERE message_type = 'message'),
+                    NOW()
+                FROM messages
+                ON CONFLICT (singleton_id) DO UPDATE SET
+                    total_messages   = EXCLUDED.total_messages,
+                    total_reactions  = EXCLUDED.total_reactions,
+                    member_count     = EXCLUDED.member_count,
+                    date_range_start = EXCLUDED.date_range_start,
+                    date_range_end   = EXCLUDED.date_range_end,
+                    last_ingested_at = EXCLUDED.last_ingested_at
+            """)
+            log.info("site_stats updated.")
+
         # Exiting the `with conn` block commits the transaction automatically
         # (or rolls back if an exception was raised).
 

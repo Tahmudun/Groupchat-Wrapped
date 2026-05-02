@@ -72,15 +72,13 @@ function withTimeout(promise, ms, label) {
 async function init() {
   try {
     console.log('init: starting');
-    // Fire both queries simultaneously — no reason to wait on the count
-    // before starting the senders fetch.
     const [
-      { count: msgCount, error: mErr },
-      { data: senders,   error: sErr },
+      { data: stats,   error: mErr },
+      { data: senders, error: sErr },
     ] = await Promise.all([
       withTimeout(
-        sb.from('messages').select('*', { count: 'exact', head: true }),
-        8000, 'messages count'
+        sb.from('site_stats').select('*').single(),
+        8000, 'site_stats'
       ),
       withTimeout(
         sb.rpc('get_distinct_senders'),
@@ -89,9 +87,9 @@ async function init() {
     ]);
     if (mErr) throw mErr;
     if (sErr) throw sErr;
-    console.log('init: ok — messages', msgCount, '· senders', senders?.length);
+    console.log('init: ok — messages', stats.total_messages, '· senders', senders?.length);
 
-    document.getElementById('stat-messages').textContent = msgCount.toLocaleString();
+    document.getElementById('stat-messages').textContent = stats.total_messages.toLocaleString();
     document.getElementById('stat-members').textContent  = senders.length.toLocaleString();
 
     populateSenderDropdown('filter-sender', senders, true);

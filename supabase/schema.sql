@@ -132,6 +132,28 @@ CREATE INDEX IF NOT EXISTS idx_members_status  ON members (status);
 CREATE INDEX IF NOT EXISTS idx_members_aliases ON members USING GIN (aliases);
 
 
+-- ----------------------------------------------------------------------------
+-- TABLE: site_stats
+-- ----------------------------------------------------------------------------
+-- Single-row cache of aggregate stats. Updated at the end of every ingest
+-- run by db.py. The frontend reads this one row instead of running count(*)
+-- on the messages table, which is 477k+ rows and causes cold-start timeouts.
+--
+-- The singleton_id PRIMARY KEY + CHECK constraint enforces exactly one row.
+-- Inserts use ON CONFLICT (singleton_id) DO UPDATE to upsert cleanly.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS site_stats (
+    singleton_id     BOOLEAN     PRIMARY KEY DEFAULT TRUE,
+    CONSTRAINT       only_one_row CHECK (singleton_id = TRUE),
+    total_messages   BIGINT      NOT NULL DEFAULT 0,
+    total_reactions  BIGINT      NOT NULL DEFAULT 0,
+    member_count     BIGINT      NOT NULL DEFAULT 0,
+    date_range_start TIMESTAMPTZ,
+    date_range_end   TIMESTAMPTZ,
+    last_ingested_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+
 -- ============================================================================
 -- SECTION 2: FUNCTIONS (RPCs callable from frontend)
 -- ============================================================================
@@ -516,15 +538,19 @@ ALTER TABLE reactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE members   ENABLE ROW LEVEL SECURITY;
 
 -- Drop first so re-running the file doesn't error on duplicate policies.
-DROP POLICY IF EXISTS "anon can read messages"   ON messages;
-DROP POLICY IF EXISTS "anon can read reactions"  ON reactions;
-DROP POLICY IF EXISTS "anon can read members"    ON members;
-DROP POLICY IF EXISTS "anon can update members"  ON members;
+ALTER TABLE site_stats ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "anon can read messages"   ON messages  FOR SELECT USING (true);
-CREATE POLICY "anon can read reactions"  ON reactions FOR SELECT USING (true);
-CREATE POLICY "anon can read members"    ON members   FOR SELECT USING (true);
-CREATE POLICY "anon can update members"  ON members   FOR UPDATE USING (true);
+DROP POLICY IF EXISTS "anon can read messages"    ON messages;
+DROP POLICY IF EXISTS "anon can read reactions"   ON reactions;
+DROP POLICY IF EXISTS "anon can read members"     ON members;
+DROP POLICY IF EXISTS "anon can update members"   ON members;
+DROP POLICY IF EXISTS "anon can read site_stats"  ON site_stats;
+
+CREATE POLICY "anon can read messages"    ON messages   FOR SELECT USING (true);
+CREATE POLICY "anon can read reactions"   ON reactions  FOR SELECT USING (true);
+CREATE POLICY "anon can read members"     ON members    FOR SELECT USING (true);
+CREATE POLICY "anon can update members"   ON members    FOR UPDATE USING (true);
+CREATE POLICY "anon can read site_stats"  ON site_stats FOR SELECT USING (true);
 
 
 -- ============================================================================
